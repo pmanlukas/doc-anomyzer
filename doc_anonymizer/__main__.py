@@ -134,4 +134,8 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    # Needed for the worker processes when packaged as Windows .exe.
+    import multiprocessing
+
+    multiprocessing.freeze_support()
     sys.exit(main())

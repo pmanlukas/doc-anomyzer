@@ -205,8 +205,8 @@ Messwerte (Stand dieser Version, ohne GLiNER, 4 CPU-Kerne):
 | 1 Akte, 100 Seiten Scan schlechter Qualität | 1 042 | **100 %** | 2 OCR-Fehltreffer zur Nutzerentscheidung, 6,5 min |
 
 **Durchsatz** (Stapel aus 300 kurzen Dokumenten, 350 Seiten, davon ⅓ Scans;
-4 CPU-Kerne): **7,1 Minuten** = ca. 42 Dokumente pro Minute bzw. ca. 2 500
-pro Stunde, inklusive aller vier Prüfstufen. Die Dokumente werden auf mehrere
+4 CPU-Kerne): **6,6 Minuten** = ca. 45 Dokumente pro Minute bzw. ca. 2 700
+pro Stunde, inklusive aller vier Prüfstufen; 300 von 300 bestanden. Die Dokumente werden auf mehrere
 Prozesse verteilt; mit mehr Kernen steigt der Durchsatz entsprechend
 (Arbeitsspeicher: ca. 2 GB + 0,5 GB je zusätzlichem Kern).
 
