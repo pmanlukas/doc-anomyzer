@@ -25,6 +25,12 @@ def first_names() -> frozenset[str]:
         names.add(name.casefold())
         # "Karl-Heinz" should also make "Karl" and "Heinz" known.
         names.update(part.casefold() for part in name.split("-"))
+    try:
+        from .learning import learned_first_names
+
+        names |= learned_first_names()  # learned from the user's decisions
+    except Exception:  # noqa: BLE001 - learning data must never break detection
+        pass
     return frozenset(names)
 
 

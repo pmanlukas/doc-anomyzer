@@ -8,13 +8,14 @@ is the result marked as failed.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
 import pymupdf
 
 from .config import Settings
+from .learning import SELF_CORRECTION, Decision
 from .models import ManualBox, PageInfo
 from .redact import RedactionResult, redact_document
 from .registry import CaseRegistry
@@ -29,11 +30,13 @@ class ProcessResult:
     redaction: RedactionResult
     verification: VerificationResult
     repairs: int = 0  # number of automatically added redactions
+    #: Detection gaps found by the verification (training examples)
+    learned: list[Decision] = field(default_factory=list)
 
 
 def _repair(source: Path, doc_index: int, registry: CaseRegistry,
-            verification: VerificationResult,
-            pages: list[PageInfo]) -> tuple[int, set[int]]:
+            verification: VerificationResult, pages: list[PageInfo],
+            learned: list[Decision]) -> tuple[int, set[int]]:
     """Add redactions for every leak found.
 
     Returns the number of fixes and the (0-based) pages that changed.
@@ -76,6 +79,11 @@ def _repair(source: Path, doc_index: int, registry: CaseRegistry,
                 count = len(registry.mentions)
                 registry.redact_occurrences(entity, leak.term)
                 fixes += len(registry.mentions) - count
+                if len(registry.mentions) > count:
+                    # A detection gap: remember it as training example.
+                    learned.append(Decision(
+                        leak.term, entity.category.value, "schwaerzen", SELF_CORRECTION,
+                        ["verifikation"], registry.contexts(entity, limit=2)))
     changed |= {m.page for m in registry.mentions
                 if id(m) not in before and m.doc == doc_index}
     if fixes:
@@ -85,19 +93,22 @@ def _repair(source: Path, doc_index: int, registry: CaseRegistry,
 
 def anonymise_document(source: Path, target: Path, doc_index: int, pages: list[PageInfo],
                        registry: CaseRegistry, settings: Settings,
-                       progress: ProgressFn | None = None) -> ProcessResult:
+                       progress: ProgressFn | None = None,
+                       run_residual_scan: bool = True) -> ProcessResult:
     """Redact, verify and – if necessary – repair and redo."""
     repairs = 0
+    learned: list[Decision] = []
     image_pages: set[int] | None = None  # first round: all pages
     for _ in range(MAX_ROUNDS):
         redaction = redact_document(source, target, doc_index, pages, registry, settings,
                                     progress)
         verification = verify_document(target, doc_index, len(pages), registry, settings,
                                        progress, image_pages=image_pages, source=source,
-                                       raster_pages=set(redaction.raster_indices))
+                                       raster_pages=set(redaction.raster_indices),
+                                       run_residual_scan=run_residual_scan)
         if not verification.leaks:
             break
-        fixed, changed = _repair(source, doc_index, registry, verification, pages)
+        fixed, changed = _repair(source, doc_index, registry, verification, pages, learned)
         repairs += fixed
         if not fixed:
             break  # nothing more we can do automatically
@@ -105,4 +116,4 @@ def anonymise_document(source: Path, target: Path, doc_index: int, pages: list[P
         # check (stage 1) always covers all pages.
         image_pages = (image_pages or set()) | changed | {
             leak.page - 1 for leak in verification.leaks if leak.page > 0}
-    return ProcessResult(redaction, verification, repairs)
+    return ProcessResult(redaction, verification, repairs, learned)

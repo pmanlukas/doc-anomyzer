@@ -36,6 +36,11 @@ _LOCK = threading.Lock()
 WEAK_SOURCES = {"ki:spacy", "ki:spacy-eigenname", "ki:gliner", "regel:street_name"}
 
 
+#: Origin of decisions the program made itself (automatic repair after a
+#: verification finding). They are used as training examples only.
+SELF_CORRECTION = "selbstkorrektur"
+
+
 @dataclass
 class Decision:
     text: str
@@ -54,8 +59,14 @@ def feedback_path() -> Path:
 
 def record(decision: Decision) -> None:
     """Append one decision (thread-safe)."""
-    with _LOCK, feedback_path().open("a", encoding="utf-8") as fh:
-        fh.write(json.dumps(asdict(decision), ensure_ascii=False) + "\n")
+    record_many([decision])
+
+
+def _changed() -> None:
+    """Make freshly learned first names effective immediately."""
+    from .lexicon import first_names
+
+    first_names.cache_clear()
 
 
 def load() -> list[Decision]:
@@ -74,6 +85,7 @@ def load() -> list[Decision]:
 def clear() -> None:
     with _LOCK:
         feedback_path().unlink(missing_ok=True)
+    _changed()
 
 
 @dataclass
@@ -99,6 +111,8 @@ def learned(min_keep_votes: int = 2) -> Learned:
         if not key:
             continue
         result.decisions += 1
+        if d.origin == SELF_CORRECTION:
+            continue  # training material only – never a global "always redact"
         last[key] = d
         if d.decision == "behalten":
             keep_votes[key] += 1
@@ -110,10 +124,69 @@ def learned(min_keep_votes: int = 2) -> Learned:
     return result
 
 
+def learned_first_names() -> set[str]:
+    """First names learned from confirmed or added persons ("Liwia Kowara")."""
+    from .detect.ner import is_known_word
+
+    names = set()
+    for d in load():
+        if d.category != "PERSON" or d.decision != "schwaerzen" or d.origin == SELF_CORRECTION:
+            continue
+        parts = d.text.split()
+        if len(parts) >= 2 and parts[0][:1].isupper() and len(parts[0]) >= 3 \
+                and parts[0].isalpha() and not is_known_word(parts[0].lower()):
+            names.add(parts[0].casefold())
+    return names
+
+
+def record_many(decisions: list[Decision]) -> None:
+    """Append several decisions at once (one file access)."""
+    if not decisions:
+        return
+    with _LOCK, feedback_path().open("a", encoding="utf-8") as fh:
+        for decision in decisions:
+            fh.write(json.dumps(asdict(decision), ensure_ascii=False) + "\n")
+    _changed()
+
+
+# ----------------------------------------------------------- training state
+
+def _state_path() -> Path:
+    return home_dir() / "lernstand.json"
+
+
+def training_state() -> dict:
+    try:
+        return json.loads(_state_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def save_training_state(**values) -> None:
+    state = training_state()
+    state.update(values)
+    _state_path().write_text(json.dumps(state, ensure_ascii=False, indent=1), encoding="utf-8")
+
+
+def training_examples() -> int:
+    return sum(len(d.contexts) for d in load())
+
+
+def training_due(min_new: int = 40) -> bool:
+    """Enough new examples since the last training run?"""
+    return training_examples() - int(training_state().get("examples", 0)) >= min_new
+
+
 def statistics() -> dict:
-    """Numbers for the settings dialog."""
+    """Numbers for the settings dialog and the start page."""
     data = load()
     info = learned()
-    return {"entscheidungen": len(data), "immer_schwaerzen": len(info.redact),
+    state = training_state()
+    return {"entscheidungen": sum(1 for d in data if d.origin != SELF_CORRECTION),
+            "selbstkorrekturen": sum(1 for d in data if d.origin == SELF_CORRECTION),
+            "immer_schwaerzen": len(info.redact),
             "nicht_mehr_vorschlagen": len(info.keep),
-            "trainingsbeispiele": sum(len(d.contexts) for d in data)}
+            "gelernte_vornamen": len(learned_first_names()),
+            "trainingsbeispiele": sum(len(d.contexts) for d in data),
+            "letztes_training": state.get("date", ""),
+            "trainingsergebnis": state.get("message", "")}

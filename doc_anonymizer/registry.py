@@ -171,6 +171,9 @@ class CaseRegistry:
     _next_id: int = field(default=1, repr=False)
     #: Pages the user has looked at (for poorly readable scans): "doc:page"
     reviewed_pages: list[str] = field(default_factory=list)
+    #: Once redaction starts, labels must not change any more (documents are
+    #: processed in parallel and must use identical replacements).
+    labels_frozen: bool = False
     _learned: learning.Learned | None = field(default=None, repr=False)
 
     # ------------------------------------------------------------------ helpers
@@ -559,6 +562,9 @@ class CaseRegistry:
 
     def assign_labels(self) -> None:
         """(Re-)compute replacement texts. Manually edited labels are kept."""
+        if self.labels_frozen:
+            self._count_mentions()
+            return
         order = self._first_appearance()
         persons = [e for e in order if e.category is Category.PERSON]
         self._label_persons(persons)
@@ -568,10 +574,14 @@ class CaseRegistry:
                 continue
             counters[entity.category] += 1
             entity.replacement = f"[{entity.category.placeholder_de} {counters[entity.category]}]"
+        self._count_mentions()
+
+    def _count_mentions(self) -> None:
         for entity in self.entities.values():
             entity.count = 0
         for m in self.mentions:
-            self.entities[m.entity_id].count += 1
+            if m.entity_id in self.entities:
+                self.entities[m.entity_id].count += 1
 
     def _first_appearance(self) -> list[Entity]:
         seen: dict[str, tuple[int, int, int]] = {}
@@ -776,6 +786,20 @@ class CaseRegistry:
         return f"{mention.prefix}{text}{suffix}"
 
     # ----------------------------------------------------------- persistence
+
+    def state_for_document(self, doc: int) -> dict:
+        """Entities plus only this document's mentions/boxes (for a worker)."""
+        data = self.to_dict()
+        data["mentions"] = [m for m in data["mentions"] if m["doc"] == doc]
+        data["manual_boxes"] = [b for b in data["manual_boxes"] if b["doc"] == doc]
+        return data
+
+    def replace_document_results(self, doc: int, mentions, boxes) -> None:
+        """Take over the (possibly repaired) mentions/boxes from a worker."""
+        self.mentions = [m for m in self.mentions if m.doc != doc] + list(mentions)
+        self.manual_boxes = [b for b in self.manual_boxes if b.doc != doc] + list(boxes)
+        self._recompute_covered()
+        self._count_mentions()
 
     def to_dict(self) -> dict:
         return {

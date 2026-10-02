@@ -19,6 +19,7 @@ import logging
 import os
 from dataclasses import dataclass, field
 from functools import lru_cache
+from pathlib import Path
 
 from ..config import MODELS_DIR
 from ..models import Category, Detection
@@ -61,6 +62,36 @@ def load_spacy():
         "(benötigt einmalig Internet).")
 
 
+def _known_words_file() -> Path:
+    from ..config import home_dir
+
+    return home_dir() / "bekannte_woerter.txt"
+
+
+@lru_cache(maxsize=1)
+def _known_words() -> frozenset[str]:
+    """Vocabulary of the language model's word vectors (500 000 words).
+
+    Exported once to a small text file so that worker processes do not have
+    to load the whole model (about 1 GB) just to look up words.
+    """
+    path = _known_words_file()
+    if not path.exists():
+        nlp = load_spacy()
+        strings = nlp.vocab.strings
+        words = []
+        for key in nlp.vocab.vectors.keys():
+            try:
+                words.append(strings[key])
+            except KeyError:
+                continue
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text("\n".join(words), encoding="utf-8")
+        tmp.replace(path)
+        return frozenset(words)
+    return frozenset(path.read_text(encoding="utf-8").split("\n"))
+
+
 @lru_cache(maxsize=200_000)
 def is_known_word(word: str) -> bool:
     """True if the language model knows ``word`` as an ordinary word.
@@ -69,10 +100,10 @@ def is_known_word(word: str) -> bool:
     ("links" is not a misread "Linke", "unter" not a misread "Gunter").
     """
     try:
-        vocab = load_spacy().vocab
+        words = _known_words()
     except RuntimeError:
         return False
-    return vocab.has_vector(word) or vocab.has_vector(word.lower())
+    return word in words or word.lower() in words
 
 
 def spacy_analyse(texts: list[str]) -> list[SpacyResult]:

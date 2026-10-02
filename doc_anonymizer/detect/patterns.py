@@ -156,10 +156,12 @@ RULES: list[Rule] = [
             r"((?:\+|\()?\d(?:[ \-/.()]{0,3}\d){5,16})", re.IGNORECASE),
          group=1, validator=phone_valid),
     Rule("tax_id_ctx", Category.TAX_ID,
-         _r(r"(?:Steuer-?ID|Steuer-?Identifikationsnummer|Identifikationsnummer|IdNr\.?)"
-            r"[^\d\n]{0,40}?(\d{2} ?\d{3} ?\d{3} ?\d{3})(?!\d)", re.IGNORECASE), group=1, priority=94),
+         # [IıIl1|]: OCR reads the "I" of "ID" in many ways ("Steuer-ıD", "Steuer-lD").
+         _r(r"(?:Steuer[- ]?[IıIl1|][Dd]|Steuer-?Identifikationsnummer|Identifikationsnummer|"
+            r"IdNr\.?)[^\d\n]{0,40}?(\d{2}[ \-]?\d{3}[ \-]?\d{3}[ \-]?\d{3})(?!\d)", re.IGNORECASE), group=1, priority=94),
     Rule("tax_id", Category.TAX_ID,
-         _r(r"(?<![\d,.])\d{2} ?\d{3} ?\d{3} ?\d{3}(?!\d|[,.]\d)"), validator=tax_id_valid,
+         _r(r"(?<![\d,.])\d{2}[ \-]?\d{3}[ \-]?\d{3}[ \-]?\d{3}(?!\d|[,.]\d)"),
+         validator=tax_id_valid,
          priority=93),
     Rule("tax_number", Category.TAX_ID,
          _r(r"(?:Steuernummer|Steuer-Nr\.?|St\.-?Nr\.?|StNr\.?)[: ]*(\d{2,3}/\d{3,4}/\d{4,5}|"

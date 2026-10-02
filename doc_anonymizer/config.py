@@ -97,6 +97,9 @@ class Settings:
     forensic_check: bool = True
     #: Learn from the user's decisions (stored locally in feedback.jsonl).
     use_learning: bool = True
+    #: Re-train the local language model automatically when enough new
+    #: examples were collected (only kept if it measurably improves).
+    auto_train: bool = True
     #: Write the confidential mapping table (original -> replacement).
     write_mapping: bool = True
     #: Folder for finished files.

@@ -19,7 +19,7 @@ also text that is only visible in pixels is covered.
 from __future__ import annotations
 
 import logging
-import os
+import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -33,6 +33,7 @@ from .config import Settings
 from .detect.pipeline import Detector
 from .extract import clean_word, render_page
 from .forensics import forensic_check
+from .parallel import ocr_threads
 from .lexicon import is_keep_prefix, is_stopword
 from .models import Category, PageInfo, Word
 from .registry import (CaseRegistry, FuzzyIndex, levenshtein_at_most, misread_candidate,
@@ -86,6 +87,8 @@ class VerificationResult:
     pages_checked: int = 0
     ocr_pages_checked: int = 0
     forensic_methods: list[str] = field(default_factory=list)
+    #: Output text per page (input for stage 4, not stored in reports)
+    scan_pages: list[PageInfo] = field(default_factory=list)
 
     @property
     def passed(self) -> bool:
@@ -93,6 +96,7 @@ class VerificationResult:
 
     def to_dict(self) -> dict:
         data = asdict(self)
+        data.pop("scan_pages", None)
         data["passed"] = self.passed
         return data
 
@@ -135,9 +139,25 @@ class Haystack:
     compact: str = ""
 
     def __post_init__(self) -> None:
-        self.raw = " ".join(self.raw.split())
+        self.raw = fold(" ".join(clean_word(self.raw).split()))
         self.norm = normalise(self.raw)
         self.compact = _compact(self.raw)
+
+
+def fold(text: str) -> str:
+    """Remove diacritics/transliterate ("Yılmaz" -> "Yilmaz", "Dvořák" -> "Dvorak").
+
+    Both the searched text and the terms are folded, so a different spelling
+    of special characters (OCR, font substitution) cannot hide a name.
+    """
+    text = text.translate(_FOLD)
+    decomposed = unicodedata.normalize("NFKD", text)
+    return unicodedata.normalize("NFC", "".join(c for c in decomposed
+                                               if not unicodedata.combining(c)))
+
+
+_FOLD = str.maketrans({"ı": "i", "ł": "l", "Ł": "L", "đ": "d", "Đ": "D", "ø": "o", "Ø": "O",
+                       "æ": "ae", "Æ": "Ae", "œ": "oe", "Œ": "Oe", "ħ": "h"})
 
 
 def _contains(hay: Haystack, term: str, compact: bool,
@@ -152,6 +172,7 @@ def _contains(hay: Haystack, term: str, compact: bool,
     """
     if compact:
         return _compact(term) in hay.compact
+    term = fold(term)
     key = normalise(term)
     if key not in hay.norm:
         return False  # fast path: most terms do not occur at all
@@ -288,7 +309,8 @@ def verify_document(output: Path, doc_index: int, expected_pages: int,
 
     # ---- Stage 2: what is visible on the page images -----------------------
     if settings.deep_verification and ocr.is_available():
-        _image_check(doc, terms, settings, result, progress, image_pages)
+        _image_check(doc, terms, settings, result, progress, image_pages,
+                     raster_pages or set())
         result.checks.append(Check(
             "Prüfstufe 2 – Bildprüfung: keine Originaldaten auf den Seitenbildern",
             len(result.leaks) == text_leaks,
@@ -321,27 +343,41 @@ def verify_document(output: Path, doc_index: int, expected_pages: int,
     result.checks.extend(structure)
 
     # ---- Stage 4: residual scan ---------------------------------------------
+    result.scan_pages = pages_for_scan
     if run_residual_scan:
         if progress:
             progress(1, 1, "Prüfstufe 4: Nachkontrolle")
-        result.suspects = residual_scan(pages_for_scan, registry, settings)
-        result.checks.append(Check(
-            "Prüfstufe 4 – Nachkontrolle mit KI/Regeln", True,
-            f"{len(result.suspects)} Hinweis(e) zur Sichtprüfung" if result.suspects
-            else "keine Auffälligkeiten"))
+        finish_verification(result, registry, settings)
     return result
+
+
+def finish_verification(result: VerificationResult, registry: CaseRegistry,
+                        settings: Settings) -> None:
+    """Stage 4 (needs the language model, therefore run in the main process)."""
+    result.suspects = residual_scan(result.scan_pages, registry, settings)
+    result.checks.append(Check(
+        "Prüfstufe 4 – Nachkontrolle mit KI/Regeln", True,
+        f"{len(result.suspects)} Hinweis(e) zur Sichtprüfung" if result.suspects
+        else "keine Auffälligkeiten"))
+    result.scan_pages = []
 
 
 def _image_check(doc: pymupdf.Document, terms, settings: Settings,
                  result: VerificationResult, progress: ProgressFn | None,
-                 only: set[int] | None = None) -> None:
+                 only: set[int] | None = None, raster: set[int] | None = None) -> None:
     """Stage 2: render every page, OCR it and search all original terms.
 
     Pages are processed in small blocks (memory) and OCR'd in parallel.
     """
     scale = 72 / settings.ocr_dpi
+    raster = raster or set()
 
-    def read(image) -> list[Word]:
+    def read(job) -> list[Word]:
+        image, raster = job
+        if not raster:
+            # Text pages: one "sparse text" pass finds everything visible; small
+            # print of the text layer is covered completely by stage 1.
+            return ocr.ocr_words(image, scale, settings.ocr_language, psm=11)
         boxes = ocr.ocr_words(image, scale, settings.ocr_language)
         if settings.thorough_ocr:
             boxes += ocr.ocr_words(image, scale, settings.ocr_language, psm=11)
@@ -349,14 +385,14 @@ def _image_check(doc: pymupdf.Document, terms, settings: Settings,
 
     fuzzy = FuzzyIndex({normalise(t) for t, _, cat, _ in terms
                         if cat is Category.PERSON and " " not in t.strip()})
-    workers = max(1, min(4, (os.cpu_count() or 2) - 1))
+    workers = ocr_threads()
     block = workers * 2
     with ThreadPoolExecutor(max_workers=workers) as pool:
         todo = [n for n in range(doc.page_count) if only is None or n in only]
         for first in range(0, len(todo), block):
             numbers = todo[first:first + block]
-            images = [render_page(doc[n], settings.ocr_dpi) for n in numbers]
-            for number, boxes in zip(numbers, pool.map(read, images)):
+            jobs = [(render_page(doc[n], settings.ocr_dpi), n in raster) for n in numbers]
+            for number, boxes in zip(numbers, pool.map(read, jobs)):
                 result.ocr_pages_checked += 1
                 words = [w.text for w in boxes]
                 hay = Haystack(" ".join(words))

@@ -171,3 +171,10 @@ table.list th { color: var(--muted); font-weight: 600; font-size: .88rem; }
 #toast.show { opacity: 1; }
 .btn.small { padding: .2rem .55rem; font-size: .85rem; }
 .notice .entity { background: rgba(255,255,255,.6); }
+
+.dropzone.big { padding: 2.6rem 1rem 2rem; }
+.drop-icon { font-size: 2.6rem; color: var(--primary); line-height: 1; margin-bottom: .4rem; }
+.panel.learn { background: #f2f7ff; border-color: #c7d8f5; font-size: .92rem; }
+.modal.wide { max-width: 1000px; }
+details.advanced { margin-top: 1rem; border-top: 1px solid var(--line); padding-top: .6rem; }
+details.advanced summary { cursor: pointer; font-weight: 600; color: var(--primary); }

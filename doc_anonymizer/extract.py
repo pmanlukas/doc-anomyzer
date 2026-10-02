@@ -14,7 +14,6 @@ and are re-built as images in the output.
 from __future__ import annotations
 
 import logging
-import os
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -26,6 +25,7 @@ from PIL import Image
 from . import ocr
 from .config import Settings
 from .models import PageInfo, Word
+from .parallel import ocr_threads
 
 log = logging.getLogger(__name__)
 
@@ -231,7 +231,7 @@ def _run_ocr(doc: pymupdf.Document, pages: list[PageInfo],
             words = _merge(words, extra)
         return number, words
 
-    with ThreadPoolExecutor(max_workers=_ocr_workers()) as pool:
+    with ThreadPoolExecutor(max_workers=ocr_threads()) as pool:
         for number, words in pool.map(work, jobs):
             page = doc[number]
             if page.rotation:
@@ -258,8 +258,3 @@ def ocr_quality(words: list[Word]) -> float:
     letters = [(len(w.text), w.conf) for w in words if any(ch.isalnum() for ch in w.text)]
     total = sum(n for n, _ in letters)
     return sum(n * c for n, c in letters) / total if total else 0.0
-
-
-def _ocr_workers() -> int:
-    """Number of parallel Tesseract processes (leave one core for the UI)."""
-    return max(1, min(4, (os.cpu_count() or 2) - 1))

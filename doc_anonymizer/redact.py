@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
@@ -186,6 +187,34 @@ def _draw_box(page: pymupdf.Page, box: Box) -> None:
                      rotate=page.rotation)
 
 
+#: Letters outside the PDF base fonts' character set (Windows-1252) and their
+#: closest Latin equivalent for the invisible text layer of image pages.
+_TRANSLIT = str.maketrans({"ı": "i", "ł": "l", "Ł": "L", "đ": "d", "Đ": "D", "ħ": "h",
+                           "ŋ": "n", "ß": "ß", "ə": "e", "ʼ": "'", "‐": "-", "−": "-"})
+
+
+def encodable(text: str) -> str:
+    """Make ``text`` representable in the base font of the text layer.
+
+    Otherwise e.g. "Steuer-ıD" (OCR) would be written as "Steuer-·D" and the
+    text layer would differ from what the detection saw.
+    """
+    out = []
+    for ch in text.translate(_TRANSLIT):
+        try:
+            ch.encode("cp1252")
+            out.append(ch)
+        except UnicodeEncodeError:
+            base = "".join(c for c in unicodedata.normalize("NFKD", ch)
+                           if not unicodedata.combining(c))
+            try:
+                base.encode("cp1252")
+                out.append(base)
+            except UnicodeEncodeError:
+                out.append("?")
+    return "".join(out)
+
+
 def _insert_text_layer(page: pymupdf.Page, segments: list[Segment],
                        matrix: pymupdf.Matrix | None) -> None:
     """Invisible, searchable text (render mode 3) on top of a page image.
@@ -203,7 +232,7 @@ def _insert_text_layer(page: pymupdf.Page, segments: list[Segment],
             rect |= seg.rect
         if matrix is not None:
             rect = rect * matrix
-        text = " ".join(seg.text for seg in line).strip()
+        text = encodable(" ".join(seg.text for seg in line).strip())
         if not text or rect.is_empty or rect.height <= 0:
             continue
         size = max(1.0, min(rect.height * 0.8, 40))

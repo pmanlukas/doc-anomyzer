@@ -148,7 +148,8 @@ def create_app(store: CaseStore | None = None, start_worker: bool = True) -> Fla
         settings = Settings.load()
         for key in ("categories", "security_mode", "use_gliner", "deep_verification",
                     "write_mapping", "output_dir", "allow_terms", "deny_terms",
-                    "use_learning", "thorough_ocr"):
+                    "use_learning", "thorough_ocr", "remove_small_images", "forensic_check",
+                    "auto_train"):
             if key in payload:
                 setattr(settings, key, payload[key])
         if settings.security_mode not in ("standard", "maximum"):
@@ -354,36 +355,24 @@ def create_app(store: CaseStore | None = None, start_worker: bool = True) -> Fla
             learning.record(learning.Decision(text, category.value, "behalten", "nachkontrolle"))
         return jsonify(ok=True)
 
-    training = {"running": False, "message": ""}
-
     @app.get("/api/learning")
     def learning_stats():
         from .train import custom_model_path
 
         data = learning.statistics()
+        training = worker.training if worker is not None else {"running": False, "message": ""}
         data.update(training=training, custom_model=custom_model_path() is not None)
         return jsonify(data)
 
     @app.post("/api/learning/train")
     def learning_train():
-        """Fine-tune the local language model in the background."""
-        if training["running"]:
+        """Fine-tune the local language model (queued behind running cases)."""
+        if worker is None:
+            abort(503)
+        if worker.training.get("running"):
             abort(409, "Das Training läuft bereits.")
-
-        def run():
-            from .train import train
-
-            training.update(running=True, message="Training läuft …")
-            try:
-                result = train(progress=lambda msg: training.update(message=msg))
-                training["message"] = result["message"]
-            except Exception as exc:  # noqa: BLE001 - shown to the user
-                log.exception("training failed")
-                training["message"] = f"Training fehlgeschlagen: {exc}"
-            finally:
-                training["running"] = False
-
-        threading.Thread(target=run, name="training", daemon=True).start()
+        worker.training = {"running": True, "message": "Training ist eingeplant …"}
+        worker.submit("", "train")
         return jsonify(ok=True)
 
     @app.post("/api/learning/clear")
@@ -494,6 +483,40 @@ def create_app(store: CaseStore | None = None, start_worker: bool = True) -> Fla
             abort(404, "Datei nicht vorhanden.")
         inline = request.args.get("inline") == "1"
         return send_file(path, as_attachment=not inline, download_name=Path(path).name)
+
+    @app.get("/api/cases/<case_id>/zip")
+    def download_zip(case_id: str):
+        """All anonymised files of a case in one ZIP (never the mapping table)."""
+        import zipfile
+
+        case = store.load(case_id)
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+            for doc in case.documents:
+                for path in (doc.output, doc.text_output, doc.report):
+                    if path and Path(path).exists():
+                        archive.write(path, Path(path).name)
+        buffer.seek(0)
+        name = Path(case.output_dir).name if case.output_dir else "Anonymisiert"
+        return send_file(buffer, mimetype="application/zip", as_attachment=True,
+                         download_name=f"{name}.zip")
+
+    @app.post("/api/cases/<case_id>/accept-all")
+    def accept_all(case_id: str):
+        """Take over all open proposals as shown (and mark scan pages as viewed)."""
+        registry = registries.get(case_id)
+        for entity in registry.entities.values():
+            if entity.uncertain and not entity.decided:
+                entity.decided = True  # not recorded as learning signal (not looked at)
+        payload = request.get_json(silent=True) or {}
+        if payload.get("pages"):
+            for d, doc_pages in enumerate(registry.docs):
+                for page in doc_pages:
+                    key = f"{d}:{page.index}"
+                    if page.poorly_readable and key not in registry.reviewed_pages:
+                        registry.reviewed_pages.append(key)
+        registries.save(case_id, registry)
+        return jsonify(ok=True)
 
     @app.get("/api/cases/<case_id>/mapping")
     def mapping(case_id: str):

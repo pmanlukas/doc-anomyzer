@@ -60,13 +60,6 @@ class ForensicResult:
     structure_problems: list[str] = field(default_factory=list)
 
 
-def _variants(term: str) -> list[str]:
-    """Encodings in which a term can appear inside raw PDF data."""
-    utf16 = term.encode("utf-16-be")
-    return [term.casefold(), utf16.decode("latin-1").casefold(), utf16.hex(),
-            term.encode("latin-1", "ignore").hex()]
-
-
 #: Marked-content properties inside page content streams that carry text
 #: ("/Span <</ActualText (Max Mustermann)>> BDC").
 _MARKED_TEXT = re.compile(r"/(?:ActualText|Alt|E)\s*(\((?:\\.|[^\\)])*\)|<[0-9A-Fa-f\s]+>)")
@@ -89,37 +82,71 @@ def _content_and_font_xrefs(doc: pymupdf.Document) -> tuple[set[int], set[int]]:
     return contents, fonts
 
 
+_TOKEN = re.compile(r"[^\W_]{2,}")
+_HEX_STRING = re.compile(r"<([0-9A-Fa-f\s]{8,})>")
+
+
+def _decoded_views(data: bytes) -> str:
+    """All plausible text readings of raw object data.
+
+    Plain (Latin-1), UTF-16 (big and little endian, e.g. /ActualText in
+    Unicode) and the contents of hexadecimal PDF strings.
+    """
+    views = [data.decode("latin-1")]
+    if data.count(b"\x00") > len(data) // 8:
+        views.append(data.decode("utf-16-be", "ignore"))
+        views.append(data.decode("utf-16-le", "ignore"))
+    for match in _HEX_STRING.finditer(views[0]):
+        digits = re.sub(r"\s", "", match.group(1))
+        raw = bytes.fromhex(digits[: len(digits) // 2 * 2])
+        views.append(raw.decode("latin-1"))
+        if raw.startswith(b"\xfe\xff") or raw[:1] == b"\x00":
+            views.append(raw.decode("utf-16-be", "ignore"))
+    return " ".join(views)
+
+
 def _raw_object_scan(doc: pymupdf.Document, terms, result: ForensicResult) -> None:
     """Search all objects except the visible page text (checked by stage 1).
 
     Page content streams are only searched inside marked-content text
     properties (/ActualText, /Alt, /E); their visible text is subject to the
     context rules of stage 1 (e.g. "Landgericht Landshut" stays readable).
-    Font programs are binary and skipped.
+    Font programs and image data are binary and skipped (images are read
+    with OCR instead).
+
+    For speed every object is indexed once (set of words); only terms whose
+    words all occur are then checked as complete phrases.
     """
-    patterns = [(t, eid, _variants(t)) for t, eid, _cat, compact in terms
-                if not compact and len(t) >= 4]
+    patterns = [(" ".join(t.casefold().split()), t.casefold().split(), t, eid)
+                for t, eid, _cat, compact in terms if not compact and len(t) >= 4]
     contents, fonts = _content_and_font_xrefs(doc)
     for xref in range(1, doc.xref_length()):
         if xref in fonts:
             continue
         try:
-            data = doc.xref_object(xref, compressed=False)
-            if doc.xref_is_stream(xref):
-                stream = doc.xref_stream(xref).decode("latin-1", "replace")
-                data += " ".join(_MARKED_TEXT.findall(stream)) if xref in contents else stream
+            obj = doc.xref_object(xref, compressed=False)
+            data = obj.encode("latin-1", "replace")
+            if doc.xref_is_stream(xref) and "/Image" not in obj:
+                stream = doc.xref_stream(xref) or b""
+                if xref in contents:
+                    stream = " ".join(_MARKED_TEXT.findall(stream.decode("latin-1"))).encode(
+                        "latin-1")
+                data += b" " + stream
         except Exception:  # noqa: BLE001 - broken objects are skipped
             continue
-        lowered = data.casefold()
-        compact_hex = re.sub(r"\s", "", lowered)
-        for term, eid, variants in patterns:
-            if any(v and (v in lowered or v in compact_hex) for v in variants):
-                result.findings.append(Finding("Rohobjekt", term, eid))
         for key in SUSPICIOUS_KEYS:
-            if key in data and f"{key} null" not in data and f"{key.strip()} null" not in data:
+            if key in obj and f"{key.strip()} null" not in obj:
                 problem = f"Objekt enthält {key.strip()}"
                 if problem not in result.structure_problems:
                     result.structure_problems.append(problem)
+        text = _decoded_views(data).casefold()
+        words = set(_TOKEN.findall(text))
+        flat = None
+        for phrase, parts, term, eid in patterns:
+            if all(p in words for p in parts):
+                flat = flat or " ".join(_TOKEN.findall(text))
+                if " ".join(_TOKEN.findall(phrase)) in flat:
+                    result.findings.append(Finding("Rohobjekt", term, eid))
 
 
 def _extract_with_other_parsers(path: Path) -> dict[str, list[str]]:
