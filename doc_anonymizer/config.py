@@ -86,8 +86,15 @@ class Settings:
     ocr_language: str = "deu+eng"
     #: Fraction of the page covered by images above which the page is OCR'd.
     image_coverage_for_ocr: float = 0.15
-    #: Check rasterised pages again with OCR after anonymisation.
+    #: Remove small images on text pages completely (logos, signatures,
+    #: stamps, photos) – they often contain names that OCR cannot read reliably.
+    remove_small_images: bool = True
+    #: An image counts as "small" below this share of the page area.
+    small_image_max_coverage: float = 0.25
+    #: Stage 2: read every finished page with OCR after anonymisation.
     deep_verification: bool = True
+    #: Stage 3: recovery attempts with independent tools (forensics).
+    forensic_check: bool = True
     #: Learn from the user's decisions (stored locally in feedback.jsonl).
     use_learning: bool = True
     #: Write the confidential mapping table (original -> replacement).

@@ -249,6 +249,13 @@ class CaseRegistry:
         self._weak_guesses_to_persons()
         self.assign_labels()
         self.mark_uncertain()
+        # Small images (logos, signatures, photos) are removed unless the user
+        # keeps them in the review, where they appear as removable boxes.
+        for d, doc_pages in enumerate(self.docs):
+            for page in doc_pages:
+                for x0, y0, x1, y1 in page.image_boxes:
+                    self.manual_boxes.append(
+                        ManualBox(d, page.index, x0, y0, x1, y1, "[Bild]", "bild"))
 
     def _resolve_conflicts(self, detections):
         """Keep the most reliable detection where detections overlap."""

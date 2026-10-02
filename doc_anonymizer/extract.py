@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import os
+import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Callable
@@ -59,15 +60,23 @@ def open_pdf(path: Path) -> pymupdf.Document:
     return doc
 
 
-def _image_coverage(page: pymupdf.Page) -> float:
-    """Fraction of the page area covered by images (0..1, approximate)."""
-    page_area = abs(page.rect) or 1.0
-    covered = 0.0
+#: Images below this area (pt²) are decoration (lines, bullets) and ignored.
+MIN_IMAGE_AREA = 100.0
+
+
+def _image_boxes(page: pymupdf.Page) -> list[pymupdf.Rect]:
+    """Visible image areas of a page (clipped to the page)."""
+    boxes = []
     for info in page.get_image_info():
         bbox = pymupdf.Rect(info["bbox"]) & page.rect
-        if not bbox.is_empty:
-            covered += abs(bbox)
-    return min(covered / page_area, 1.0)
+        if not bbox.is_empty and abs(bbox) >= MIN_IMAGE_AREA:
+            boxes.append(bbox)
+    return boxes
+
+
+def _coverage(boxes: list[pymupdf.Rect], page: pymupdf.Page) -> float:
+    """Fraction of the page area covered by ``boxes`` (0..1, approximate)."""
+    return min(sum(abs(b) for b in boxes) / (abs(page.rect) or 1.0), 1.0)
 
 
 def _invisible_text_ratio(page: pymupdf.Page) -> float:
@@ -84,11 +93,27 @@ def _invisible_text_ratio(page: pymupdf.Page) -> float:
     return hidden / total if total else 0.0
 
 
+#: Invisible characters that can be used to hide a name from a text search
+#: ("Mus\u200btermann") – removed before detection.
+_INVISIBLE_CHARS = dict.fromkeys(map(ord, "\u200b\u200c\u200d\u2060\ufeff\u00ad\u180e"))
+
+
+def clean_word(text: str) -> str:
+    """Unicode-normalise a word: ligatures ("ﬁ" -> "fi"), full-width letters,
+    zero-width characters and soft hyphens."""
+    return unicodedata.normalize("NFKC", text).translate(_INVISIBLE_CHARS)
+
+
 def _native_words(page: pymupdf.Page) -> list[Word]:
     """Words of the text layer, *including* text outside the visible area."""
-    raw = page.get_text("words", sort=True, clip=pymupdf.INFINITE_RECT())
-    return [Word(w[0], w[1], w[2], w[3], w[4], "text", int(w[5]) * 1000 + int(w[6]))
-            for w in raw if w[4].strip()]
+    flags = pymupdf.TEXTFLAGS_WORDS & ~pymupdf.TEXT_PRESERVE_LIGATURES
+    raw = page.get_text("words", sort=True, clip=pymupdf.INFINITE_RECT(), flags=flags)
+    words = []
+    for w in raw:
+        text = clean_word(w[4])
+        if text.strip():
+            words.append(Word(w[0], w[1], w[2], w[3], text, "text", int(w[5]) * 1000 + int(w[6])))
+    return words
 
 
 def _overlap(a: Word, b: Word) -> float:
@@ -127,18 +152,28 @@ def analyse_document(path: Path, settings: Settings,
     for page in doc:
         info = PageInfo(index=page.number, width=page.rect.width, height=page.rect.height)
         words = _native_words(page)
-        coverage = _image_coverage(page)
+        images = _image_boxes(page)
+        coverage = _coverage(images, page)
         hidden = _invisible_text_ratio(page)
+        is_scan = (len(words) < 5 and coverage > 0.3) or (hidden > 0.8 and coverage > 0.5)
+        if not is_scan and settings.remove_small_images:
+            # Logos, signatures, stamps, photos on text pages: removed as a
+            # whole (OCR cannot read stylised names in logos reliably).
+            limit = settings.small_image_max_coverage * abs(page.rect)
+            small = [b for b in images if abs(b) < limit]
+            info.image_boxes = [[b.x0, b.y0, b.x1, b.y1] for b in small]
+            images = [b for b in images if abs(b) >= limit]
+            coverage = _coverage(images, page)
 
         # Classification (see module docstring).
-        if (len(words) < 5 and coverage > 0.3) or (hidden > 0.8 and coverage > 0.5):
+        if is_scan:
             info.kind = "scan"
             info.force_raster = True
-        elif coverage >= settings.image_coverage_for_ocr:
-            info.kind = "mixed"
+        elif coverage >= settings.image_coverage_for_ocr or images:
+            info.kind = "mixed"  # larger images (enclosures) are read with OCR
         else:
             info.kind = "digital"
-        if not words and coverage == 0:
+        if not words and not images and not info.image_boxes:
             # Vector drawings only (e.g. text converted to outlines) – the only
             # way to "read" it is OCR, so treat it like a scan.
             info.kind = "scan"

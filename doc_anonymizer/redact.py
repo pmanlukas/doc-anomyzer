@@ -17,6 +17,7 @@ Why the result cannot be restored:
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
@@ -247,6 +248,11 @@ def redact_document(source: Path, target: Path, doc_index: int, pages: list[Page
               javascript=True, metadata=True, redactions=True, remove_links=True,
               reset_fields=True, reset_responses=True, thumbnails=True, xml_metadata=True)
 
+    # 2b) Tagged PDFs (e.g. from Word) repeat text in marked-content
+    #     properties such as /ActualText or /Alt – invisible, but extractable.
+    for info in pages:
+        _strip_marked_content_properties(src, src[info.index])
+
     # 3) Draw the visible replacement boxes.
     for info, plan in zip(pages, plans):
         page = src[info.index]
@@ -269,6 +275,12 @@ def redact_document(source: Path, target: Path, doc_index: int, pages: list[Page
             progress(info.index + 1, len(pages), "Neues PDF erzeugen")
 
     result.texts = [plan.plain_text() for plan in plans]
+    # Re-subset embedded fonts: they would otherwise still contain the glyphs
+    # of removed characters (revealing e.g. that an "ł" occurred somewhere).
+    try:
+        out.subset_fonts()
+    except Exception:  # noqa: BLE001 - unusual fonts: keep them as they are
+        log.info("font subsetting failed", exc_info=True)
     out.set_metadata({})
     out.del_xml_metadata()
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -276,6 +288,24 @@ def redact_document(source: Path, target: Path, doc_index: int, pages: list[Page
     out.close()
     src.close()
     return result
+
+
+_BDC_WITH_PROPERTIES = re.compile(rb"/([A-Za-z0-9_.\-]+)\s*<<(?:(?!>>).)*?>>\s*BDC", re.S)
+
+
+def _strip_marked_content_properties(doc: pymupdf.Document, page: pymupdf.Page) -> None:
+    """Replace "/Span <</ActualText (…)>> BDC" by "/Span BMC" in the page content.
+
+    The marked-content structure stays valid, only the property dictionaries
+    (which may carry alternative text) are dropped.
+    """
+    for xref in page.get_contents():
+        stream = doc.xref_stream(xref)
+        if not stream or b"BDC" not in stream:
+            continue
+        cleaned = _BDC_WITH_PROPERTIES.sub(rb"/\1 BMC", stream)
+        if cleaned != stream:
+            doc.update_stream(xref, cleaned)
 
 
 def _rebuild_as_image(out: pymupdf.Document, page: pymupdf.Page, plan: PagePlan,

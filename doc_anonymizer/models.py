@@ -144,6 +144,8 @@ class PageInfo:
     notes: list[str] = field(default_factory=list)
     #: Readability of OCR'd pages (mean word confidence 0..100, None = digital)
     ocr_quality: float | None = None
+    #: Small images (logos, signatures, photos) to remove: [x0, y0, x1, y1]
+    image_boxes: list[list[float]] = field(default_factory=list)
 
     @property
     def poorly_readable(self) -> bool:
@@ -159,6 +161,7 @@ class PageInfo:
             "force_raster": self.force_raster,
             "notes": self.notes,
             "ocr_quality": self.ocr_quality,
+            "image_boxes": self.image_boxes,
             "words": [w.to_list() for w in self.words],
         }
 
@@ -172,6 +175,7 @@ class PageInfo:
             force_raster=data["force_raster"],
             notes=list(data.get("notes", [])),
             ocr_quality=data.get("ocr_quality"),
+            image_boxes=[list(b) for b in data.get("image_boxes", [])],
             words=[Word.from_list(w) for w in data["words"]],
         )
 
@@ -260,6 +264,8 @@ class ManualBox:
     x1: float
     y1: float
     label: str = "[geschwärzt]"
+    #: "manuell" (drawn by the user) or "bild" (image removed automatically)
+    kind: str = "manuell"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

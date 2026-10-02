@@ -31,7 +31,8 @@ import regex as re
 from . import ocr
 from .config import Settings
 from .detect.pipeline import Detector
-from .extract import render_page
+from .extract import clean_word, render_page
+from .forensics import forensic_check
 from .lexicon import is_keep_prefix, is_stopword
 from .models import Category, PageInfo, Word
 from .registry import (CaseRegistry, FuzzyIndex, levenshtein_at_most, misread_candidate,
@@ -84,6 +85,7 @@ class VerificationResult:
     terms_checked: int = 0
     pages_checked: int = 0
     ocr_pages_checked: int = 0
+    forensic_methods: list[str] = field(default_factory=list)
 
     @property
     def passed(self) -> bool:
@@ -235,7 +237,9 @@ def verify_document(output: Path, doc_index: int, expected_pages: int,
                     registry: CaseRegistry, settings: Settings,
                     progress: ProgressFn | None = None,
                     run_residual_scan: bool = True,
-                    image_pages: set[int] | None = None) -> VerificationResult:
+                    image_pages: set[int] | None = None,
+                    source: Path | None = None,
+                    raster_pages: set[int] | None = None) -> VerificationResult:
     """Run all verification stages on a finished PDF.
 
     Stage 1 – text check: every original term is searched in the complete text
@@ -263,7 +267,9 @@ def verify_document(output: Path, doc_index: int, expected_pages: int,
     for page in doc:
         result.pages_checked += 1
         # Text of the page *including* text outside the visible area.
-        words = page.get_text("words", clip=pymupdf.INFINITE_RECT())
+        words = page.get_text("words", clip=pymupdf.INFINITE_RECT(),
+                              flags=pymupdf.TEXTFLAGS_WORDS & ~pymupdf.TEXT_PRESERVE_LIGATURES)
+        words = [(*w[:4], clean_word(w[4]), *w[5:]) for w in words]
         hay = Haystack(" ".join(w[4] for w in words))
         for term, entity_id, category, compact in terms:
             if _contains(hay, term, compact, category):
@@ -295,15 +301,32 @@ def verify_document(output: Path, doc_index: int, expected_pages: int,
             "übersprungen (abgeschaltet oder Texterkennung nicht installiert)"))
     doc.close()
 
+    # ---- Stage 3: recovery attempts (forensics) -------------------------------
+    if settings.forensic_check:
+        if progress:
+            progress(1, 1, "Prüfstufe 3: Wiederherstellungsversuche")
+        forensic = forensic_check(output, source, terms, settings, raster_pages or set())
+        for f in forensic.findings:
+            entity = registry.entities.get(f.entity_id)
+            result.leaks.append(Leak(f.page, entity.category.value if entity else "",
+                                     f.entity_id, f.term, f"Forensik: {f.method}"))
+        result.forensic_methods = forensic.methods
+        result.checks.append(Check(
+            "Prüfstufe 3 – Wiederherstellungsversuche: nichts wiederherstellbar",
+            not forensic.findings and not forensic.structure_problems,
+            "; ".join(forensic.methods) + (
+                " | Probleme: " + ", ".join(forensic.structure_problems)
+                if forensic.structure_problems else "")))
+
     result.checks.extend(structure)
 
-    # ---- Stage 3: residual scan ---------------------------------------------
+    # ---- Stage 4: residual scan ---------------------------------------------
     if run_residual_scan:
         if progress:
-            progress(1, 1, "Prüfstufe 3: Nachkontrolle")
+            progress(1, 1, "Prüfstufe 4: Nachkontrolle")
         result.suspects = residual_scan(pages_for_scan, registry, settings)
         result.checks.append(Check(
-            "Prüfstufe 3 – Nachkontrolle mit KI/Regeln", True,
+            "Prüfstufe 4 – Nachkontrolle mit KI/Regeln", True,
             f"{len(result.suspects)} Hinweis(e) zur Sichtprüfung" if result.suspects
             else "keine Auffälligkeiten"))
     return result

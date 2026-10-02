@@ -12,7 +12,8 @@ oder z. B. von einem KI-Sprachmodell analysiert werden.
   erhält in allen Dokumenten einer Akte denselben Platzhalter.
 * Die Daten werden **unwiderruflich aus der Datei entfernt** (keine
   überdeckenden Kästen, die man wegklicken könnte).
-* Jedes Ergebnis wird in **drei Prüfstufen** automatisch kontrolliert; ein
+* Jedes Ergebnis wird in **vier Prüfstufen** automatisch kontrolliert (inkl.
+  echter Wiederherstellungsversuche); ein
   **Prüfbericht** dokumentiert das Ergebnis.
 * Unsichere Stellen legt das Programm dem Nutzer zur Entscheidung vor und
   **lernt aus diesen Entscheidungen**.
@@ -123,15 +124,30 @@ Mehrere voneinander unabhängige Verfahren werden kombiniert:
 * Versteckter Text (weiß, unsichtbar, außerhalb der Seite) wird erkannt und
   entfernt bzw. die Seite als Bild neu aufgebaut.
 
-## 6. Die drei Prüfstufen
+## 6. Die vier Prüfstufen
 
 | Stufe | Was wird geprüft | Wirkung bei Fund |
 |---|---|---|
 | 1 – Textprüfung | Alle Originalbegriffe (inkl. jedes einzelnen Namensteils) im gesamten Text der fertigen Datei inkl. unsichtbarem Text, im Dateinamen und in der Textfassung; Dateistruktur (Metadaten, Anhänge …) | automatische Nachschwärzung, erneute Prüfung |
 | 2 – Bildprüfung | Jede fertige Seite wird als Bild gerendert und per OCR gelesen – geprüft wird, was ein Mensch oder eine KI tatsächlich *sieht* | automatische Nachschwärzung genau dieser Stellen, erneute Prüfung |
-| 3 – Nachkontrolle | Erkennung läuft erneut über das Ergebnis | Hinweise zur Entscheidung durch den Nutzer |
+| 3 – Wiederherstellungsversuche | Ein „Angreifer“ versucht die Daten zurückzuholen: Suche in allen PDF-Rohobjekten und entpackten Datenströmen (auch UTF-16/Hex), Textauslesen mit unabhängigen Programmen (pypdf, pdfminer, pdftotext), OCR aller eingebetteten Bilder in Originalauflösung (auch abgeschnittene/unsichtbare Bildteile), Abgleich der Dokumentkennung | betroffene Seite wird komplett als Bild neu aufgebaut, erneute Prüfung |
+| 4 – Nachkontrolle | Erkennung läuft erneut über das Ergebnis | Hinweise zur Entscheidung durch den Nutzer |
 
-Erst wenn Stufe 1 und 2 nichts mehr finden, gilt die Prüfung als bestanden.
+Erst wenn Stufe 1 bis 3 nichts mehr finden, gilt die Prüfung als bestanden.
+
+**Getestete Angriffe** (`tests/test_recovery.py`): Name versteckt als
+ActualText in getaggten PDFs (Word), in abgeschnittenen Bildteilen, als weißer,
+winziger, unsichtbarer oder unter einem Bild liegender Text, außerhalb der
+Seite, mit weichem Trennstrich im Wort, in Formular-XObjects, Kommentaren,
+Formularfeldern, Links, Metadaten, XMP, Lesezeichen, Dateianhängen,
+Seitenbeschriftungen, ausgeblendeten Ebenen, JavaScript und in alten
+Dateiversionen. Bei keinem Fall lässt sich der Name aus dem Ergebnis
+wiederherstellen.
+
+**Bekannte Restinformation:** Die *Breite* einer Schwärzung entspricht der
+Länge des Originals (wie bei jeder Schwärzung auf Papier). Aus „M. M.“ und
+dem Zusammenhang kann ein Mensch mit Vorwissen ggf. Rückschlüsse ziehen –
+deshalb sollten auch Orte, Firmen und Daten konsequent ersetzt bleiben.
 
 ## 7. Lernen aus Entscheidungen
 
@@ -214,7 +230,7 @@ Aufbau des Pakets `doc_anonymizer/`:
 | `detect/ner.py`, `detect/pipeline.py` | spaCy/GLiNER und Zusammenführung |
 | `registry.py` | Gruppierung, Weitergabe, Initialen/Platzhalter, Unsicherheiten |
 | `redact.py` | echtes Schwärzen, neues PDF, Textfassung |
-| `verify.py`, `process.py` | drei Prüfstufen, automatische Nachbesserung |
+| `verify.py`, `forensics.py`, `process.py` | vier Prüfstufen, Wiederherstellungsversuche, automatische Nachbesserung |
 | `learning.py`, `train.py` | Lernen aus Entscheidungen, Nachtrainieren |
 | `jobs.py`, `web.py`, `static/` | Akten, Hintergrundverarbeitung, Oberfläche |
 

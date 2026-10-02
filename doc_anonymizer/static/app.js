@@ -633,7 +633,7 @@ function resultCard(c, d, i) {
       h("li", { class: ch.ok ? "ok" : "bad" }, ch.name, ch.detail ? h("span", { class: "muted small" }, ` – ${ch.detail}`) : null))),
     leaks.length ? [h("h3", {}, "Gefundene Originaldaten"), h("ul", {}, leaks)] : null,
     suspects.length ? [
-      h("h3", {}, "Prüfstufe 3: Bitte kurz entscheiden"),
+      h("h3", {}, "Prüfstufe 4: Bitte kurz entscheiden"),
       h("p", { class: "muted small" }, "Die Nachkontrolle hat Stellen gefunden, die personenbezogen aussehen könnten. " +
         "Oft sind das Fehlalarme (z. B. Fachbegriffe). Ihre Entscheidung wird für künftige Akten gemerkt."),
       h("ul", {}, suspects), redoBtn] : null,

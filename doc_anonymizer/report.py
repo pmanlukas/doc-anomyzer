@@ -125,8 +125,13 @@ Kommentare, Anhänge, Lesezeichen, Formulare und frühere Dateiversionen wurden 
 inkl. unsichtbarem Text, Dateiname und Dateistruktur.</li>
 <li>Prüfstufe 2 (Bild): {verification.ocr_pages_checked} Seiten wurden als Bild gelesen
 (Texterkennung) und ebenfalls nach allen Originalbegriffen durchsucht.</li>
-<li>Prüfstufe 3 (Nachkontrolle): erneute automatische Erkennung auf dem Ergebnis;
+<li>Prüfstufe 3 (Wiederherstellungsversuche): {_e("; ".join(verification.forensic_methods)
+or "nicht durchgeführt")}.</li>
+<li>Prüfstufe 4 (Nachkontrolle): erneute automatische Erkennung auf dem Ergebnis;
 Auffälligkeiten wurden dem Nutzer zur Entscheidung vorgelegt.</li>
+<li>Eingebettete Schriften wurden auf die verbliebenen Zeichen reduziert; versteckte
+Alternativtexte (ActualText/Alt) entfernt; kleine Bilder (Logos, Unterschriften, Fotos)
+entfernt, sofern der Nutzer sie nicht ausdrücklich behalten hat.</li>
 </ul>
 <p class="muted">Hinweis: Eine automatische Anonymisierung kann eine abschließende
 Sichtkontrolle nicht vollständig ersetzen. Bitte insbesondere Unterschriften, Stempel,

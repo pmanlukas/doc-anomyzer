@@ -32,7 +32,8 @@ class ProcessResult:
 
 
 def _repair(source: Path, doc_index: int, registry: CaseRegistry,
-            verification: VerificationResult) -> tuple[int, set[int]]:
+            verification: VerificationResult,
+            pages: list[PageInfo]) -> tuple[int, set[int]]:
     """Add redactions for every leak found.
 
     Returns the number of fixes and the (0-based) pages that changed.
@@ -42,6 +43,18 @@ def _repair(source: Path, doc_index: int, registry: CaseRegistry,
     before = {id(m) for m in registry.mentions}
     with pymupdf.open(source) as pdf:
         for leak in verification.leaks:
+            if leak.where.startswith("Forensik"):
+                # Recovered by an attacker technique: rebuild the affected page
+                # (or, if the page is unknown, every page) from scratch as image.
+                targets = [p for p in pages if leak.page < 1 or p.index == leak.page - 1]
+                for page in targets:
+                    if not page.force_raster:
+                        page.force_raster = True
+                        page.notes.append("Wiederherstellungsversuch erfolgreich – Seite wird "
+                                          "als Bild neu aufgebaut.")
+                        changed.add(page.index)
+                        fixes += 1
+                continue
             entity = registry.entities.get(leak.entity_id)
             if entity is None or leak.page < 1:
                 continue
@@ -80,10 +93,11 @@ def anonymise_document(source: Path, target: Path, doc_index: int, pages: list[P
         redaction = redact_document(source, target, doc_index, pages, registry, settings,
                                     progress)
         verification = verify_document(target, doc_index, len(pages), registry, settings,
-                                       progress, image_pages=image_pages)
+                                       progress, image_pages=image_pages, source=source,
+                                       raster_pages=set(redaction.raster_indices))
         if not verification.leaks:
             break
-        fixed, changed = _repair(source, doc_index, registry, verification)
+        fixed, changed = _repair(source, doc_index, registry, verification, pages)
         repairs += fixed
         if not fixed:
             break  # nothing more we can do automatically
