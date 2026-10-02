@@ -42,19 +42,21 @@ Danach läuft das Programm vollständig offline.
    `Start.bat`. Der Browser öffnet sich mit der Oberfläche. Der Browser dient
    nur als Anzeige – das Programm ist ausschließlich auf diesem Computer
    erreichbar (`127.0.0.1`).
-2. **Neue Akte:** PDF-Dateien in das Feld ziehen. Zusammengehörige Dokumente
-   gemeinsam hinzufügen – dann erhält dieselbe Person überall dieselben
-   Initialen. Auf „Analyse starten“ klicken.
+2. **Dokumente ablegen:** PDF-Dateien **oder einen ganzen Ordner** auf die
+   Startseite ziehen (oder „Dateien auswählen“ / „Ordner auswählen“). Die
+   Analyse startet sofort. Alles, was gemeinsam abgelegt wird, ist eine
+   „Akte“: Dieselbe Person erhält in allen Dokumenten dieselben Initialen.
+   Auch hunderte Dokumente sind kein Problem (siehe Abschnitt 8).
 3. **Prüfen:**
-   * Oben stehen die Punkte, bei denen sich das Programm **nicht sicher** ist
-     (z. B. nur vom Sprachmodell erkannte Wörter, schlecht lesbare
-     Scan-Seiten). Jeweils „schwärzen“ oder „nicht schwärzen“ wählen bzw. die
-     Seite ansehen und „geprüft“ klicken.
+   * Oben stehen nur die Punkte, bei denen sich das Programm **nicht sicher**
+     ist (z. B. nur vom Sprachmodell erkannte Wörter, schlecht lesbare
+     Scan-Seiten). Jeweils „schwärzen“ / „nicht schwärzen“ wählen – oder mit
+     **„Alle Vorschläge übernehmen“** in einem Schritt abschließen.
    * Darunter alle gefundenen Daten mit ihrer Ersetzung. Haken entfernen =
      nicht schwärzen. Ersetzungen lassen sich direkt ändern.
    * Fehlt etwas: „Begriff hinzufügen“ oder auf der Seitenansicht **mit der
-     Maus einen Rahmen ziehen** (z. B. für Unterschriften, Stempel, Fotos).
-4. **Anonymisieren:** „Jetzt endgültig anonymisieren“. Ergebnis:
+     Maus einen Rahmen ziehen**.
+4. **Anonymisieren:** „Jetzt endgültig anonymisieren“. Ergebnis je Dokument:
    * `…_anonymisiert.pdf` – das anonymisierte Dokument,
    * `…_anonymisiert.txt` – Textfassung in Lesereihenfolge (ideal zum
      Einfügen in KI-Werkzeuge),
@@ -62,12 +64,16 @@ Danach läuft das Programm vollständig offline.
    * `VERTRAULICH_nicht_weitergeben\Zuordnungstabelle.html` – Original →
      Ersetzung. **Hebt die Anonymisierung auf, niemals weitergeben.**
 
+   Die Ergebnisseite zeigt eine Tabelle aller Dokumente (Problemfälle
+   zuerst), „Alle als ZIP“ lädt alle Ergebnisse auf einmal herunter (ohne die
+   vertrauliche Zuordnungstabelle).
+
    Standard-Ergebnisordner ist `C:\Users\<Name>\Anonymisiert` – bewusst nicht
    „Dokumente“ oder „Desktop“, weil diese oft per OneDrive in die Cloud
    synchronisiert werden. Das Programm warnt, wenn ein Cloud-Ordner gewählt wird.
-5. **Nachkontrolle:** Meldet Prüfstufe 3 noch Auffälligkeiten, kann man sie
-   direkt im Ergebnis „schwärzen“ oder als „kein Personenbezug“ markieren und
-   neu anonymisieren.
+5. **Nachkontrolle:** Meldet Prüfstufe 4 noch Auffälligkeiten, kann man sie
+   unter „Details“ direkt „schwärzen“ oder als „kein Personenbezug“ markieren
+   und neu anonymisieren.
 
 **Selbst nachprüfen:** Anonymisiertes PDF öffnen, `Strg+F`, einen der Namen
 suchen – er darf nicht gefunden werden.
@@ -149,17 +155,26 @@ Länge des Originals (wie bei jeder Schwärzung auf Papier). Aus „M. M.“ und
 dem Zusammenhang kann ein Mensch mit Vorwissen ggf. Rückschlüsse ziehen –
 deshalb sollten auch Orte, Firmen und Daten konsequent ersetzt bleiben.
 
-## 7. Lernen aus Entscheidungen
+## 7. Selbstlernen
 
-Jede Entscheidung (bestätigen, ablehnen, Begriff hinzufügen, Nachkontrolle)
-wird lokal in `%LOCALAPPDATA%\DocAnonymizer\feedback.jsonl` gespeichert:
+Das Programm verbessert sich mit jeder Akte – alles bleibt auf dem Rechner
+(`%LOCALAPPDATA%\DocAnonymizer`):
 
-* Bestätigte bzw. hinzugefügte Begriffe werden künftig **automatisch** geschwärzt.
-* Zweimal abgelehnte Vorschläge des Sprachmodells werden nicht mehr vorgeschlagen.
-* `Modell_trainieren.bat` (oder Einstellungen → „Sprachmodell jetzt
-  nachtrainieren“) passt das lokale spaCy-Modell mit den gesammelten
-  Textstellen an. Ein Teil der Beispiele wird zurückgehalten; das neue Modell
-  wird **nur übernommen, wenn es darauf besser ist** als das bisherige.
+* **Aus Ihren Entscheidungen:** Bestätigte bzw. hinzugefügte Begriffe werden
+  künftig automatisch geschwärzt; zweimal abgelehnte Vorschläge des
+  Sprachmodells werden nicht mehr vorgeschlagen; Vornamen aus bestätigten
+  Personennamen erweitern die Namensliste.
+* **Aus eigenen Fehlern:** Findet eine Prüfstufe etwas, das die Erkennung
+  übersehen hatte, wird die Stelle automatisch nachgeschwärzt *und* als
+  Trainingsbeispiel gespeichert („Selbstkorrektur“).
+* **Nachtrainieren des Sprachmodells:** Sobald genug neue Beispiele vorliegen,
+  trainiert das Programm das lokale spaCy-Modell automatisch im Hintergrund
+  nach (zwischen zwei Akten, nie während einer laufenden). Ein Teil der
+  Beispiele wird zurückgehalten; das neue Modell wird **nur übernommen, wenn
+  es darauf nachweislich besser ist** als das bisherige. Manuell:
+  Einstellungen → „Sprachmodell jetzt nachtrainieren“ oder
+  `Modell_trainieren.bat`.
+* Die Startseite zeigt den Lernfortschritt.
 
 Die Lerndaten enthalten Textausschnitte aus den Dokumenten, bleiben auf dem
 Rechner und können in den Einstellungen gelöscht werden.
@@ -189,6 +204,12 @@ Messwerte (Stand dieser Version, ohne GLiNER, 4 CPU-Kerne):
 | 1 Akte, 300 Seiten digital | 3 128 | **100 %** | bestanden, 4,7 min |
 | 1 Akte, 100 Seiten Scan schlechter Qualität | 1 042 | **100 %** | 2 OCR-Fehltreffer zur Nutzerentscheidung, 6,5 min |
 
+**Durchsatz** (Stapel aus 300 kurzen Dokumenten, 350 Seiten, davon ⅓ Scans;
+4 CPU-Kerne): **7,1 Minuten** = ca. 42 Dokumente pro Minute bzw. ca. 2 500
+pro Stunde, inklusive aller vier Prüfstufen. Die Dokumente werden auf mehrere
+Prozesse verteilt; mit mehr Kernen steigt der Durchsatz entsprechend
+(Arbeitsspeicher: ca. 2 GB + 0,5 GB je zusätzlichem Kern).
+
 Wichtig: Wo die automatische Prüfung noch etwas findet, meldet das Programm
 „nicht bestanden“ und fordert zur Entscheidung auf – es gibt kein stilles
 Durchrutschen.
@@ -199,8 +220,10 @@ Durchrutschen.
   Texterkennung kann solche Seiten zuverlässig lesen. Das Programm erkennt
   diese Seiten, markiert sie als „schlecht lesbar“ und fordert zur
   Sichtprüfung auf. Bitte dort Namen mit der Maus einrahmen.
-* **Handschrift, Unterschriften, Stempel, Fotos** werden nicht automatisch
-  erkannt – bitte mit der Maus einrahmen.
+* **Logos, Unterschriften, Stempel und Fotos auf Textseiten** werden
+  automatisch entfernt (abschaltbar). **Handschrift und Unterschriften auf
+  eingescannten Seiten** werden nicht automatisch erkannt – bitte mit der
+  Maus einrahmen.
 * **Indirekte Identifizierbarkeit** (z. B. „der einzige Kinderarzt im Ort“,
   seltene Berufe, Diagnosen) kann ein Programm nicht sicher beurteilen.
 * Eine automatische Anonymisierung ersetzt nicht die abschließende
@@ -232,7 +255,7 @@ Aufbau des Pakets `doc_anonymizer/`:
 | `redact.py` | echtes Schwärzen, neues PDF, Textfassung |
 | `verify.py`, `forensics.py`, `process.py` | vier Prüfstufen, Wiederherstellungsversuche, automatische Nachbesserung |
 | `learning.py`, `train.py` | Lernen aus Entscheidungen, Nachtrainieren |
-| `jobs.py`, `web.py`, `static/` | Akten, Hintergrundverarbeitung, Oberfläche |
+| `jobs.py`, `parallel.py`, `web.py`, `static/` | Akten, parallele Hintergrundverarbeitung, Oberfläche |
 
 Lizenzhinweis: PyMuPDF steht unter AGPL-3.0 (bzw. kommerzieller Lizenz von
 Artifex). Für die interne Nutzung in einer Kanzlei ist das unproblematisch; bei

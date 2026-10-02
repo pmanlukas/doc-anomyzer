@@ -61,3 +61,13 @@ def test_legal_content_stays():
             "VI ZR 123/19, Rn. 15). Im Jahr 2020 zahlte er 12345 Euro. GOÄ-Nr. 50. "
             "Die Beklagte GmbH zahlte. Er befuhr die Bundesstraße.")
     assert found(text) == {}
+
+
+def test_ocr_variants():
+    f = found("Steuer-ıD: 23-539 572 762\nTel.: 089- -358675\nGeburtadatum: 11.04.1950\n"
+              "SV-Nummer: 36 266759 s 152\nE-Mail: bekir.weihmann@ hotmail.de")
+    assert "23-539 572 762" in f["TAX_ID"]
+    assert "089- -358675" in f["PHONE"]
+    assert "11.04.1950" in f["BIRTH_DATE"]
+    assert "36 266759 s 152" in f["SOCIAL_SECURITY"]
+    assert "bekir.weihmann@ hotmail.de" in f["EMAIL"]

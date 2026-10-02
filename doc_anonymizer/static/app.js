@@ -56,7 +56,10 @@ function showError(err) {
 }
 
 const app = () => document.getElementById("app");
-function render(...nodes) { app().replaceChildren(...nodes); window.scrollTo(0, 0); }
+function render(...nodes) {
+  app().replaceChildren(...nodes.flat().filter((n) => n !== null && n !== undefined && n !== false));
+  window.scrollTo(0, 0);
+}
 
 const STATUS = {
   neu: "Dokumente hinzufügen",
@@ -551,7 +554,11 @@ async function viewReview(c) {
   }, "Jetzt endgültig anonymisieren →");
 
   const warnings = (c.warnings || []).map((w) => h("div", { class: "notice warn small" }, w));
-  const notes = c.documents.flatMap((d) => d.notes || []).map((n) => h("div", { class: "notice warn small" }, n));
+  // Poorly readable pages are listed under "Bitte entscheiden"; other notes
+  // are shown here (at most three, otherwise the page would become endless).
+  const allNotes = c.documents.flatMap((d) => d.notes || []).filter((n) => !n.includes("schlecht lesbar"));
+  const notes = allNotes.slice(0, 3).map((n) => h("div", { class: "notice warn small" }, n));
+  if (allNotes.length > 3) notes.push(h("div", { class: "notice warn small" }, `… und ${allNotes.length - 3} weitere Hinweise zu einzelnen Seiten.`));
 
   render(
     steps(1),
@@ -808,17 +815,20 @@ function openHelp() {
     h("div", { class: "modal" },
       h("h1", {}, "So funktioniert es"),
       h("ol", {},
-        h("li", {}, h("strong", {}, "Neue Akte anlegen"), " und die PDF-Dateien hineinziehen. Zusammengehörige Dokumente gemeinsam verarbeiten."),
-        h("li", {}, h("strong", {}, "Prüfen: "), "Links stehen alle gefundenen Daten, rechts sehen Sie die Seite mit farbigen Markierungen. " +
-          "Haken entfernen, wenn etwas nicht geschwärzt werden soll. Fehlendes über „Begriff hinzufügen“ ergänzen oder auf der Seite mit der Maus einrahmen."),
-        h("li", {}, h("strong", {}, "Anonymisieren: "), "Das Programm entfernt die Daten unwiderruflich, erstellt ein neues PDF, eine Textfassung und einen Prüfbericht."),
-        h("li", {}, h("strong", {}, "Ergebnis kontrollieren: "), "Der Prüfbericht zeigt, dass keine Originaldaten mehr enthalten sind. " +
-          "Sie können das zusätzlich selbst prüfen: PDF öffnen, Strg+F drücken und nach einem Namen suchen – er darf nicht gefunden werden.")),
+        h("li", {}, h("strong", {}, "PDF-Dateien oder einen ganzen Ordner"), " auf die Startseite ziehen (oder „Dateien auswählen“). Die Analyse startet sofort."),
+        h("li", {}, h("strong", {}, "Prüfen: "), "Oben stehen nur die Punkte, bei denen sich das Programm unsicher ist – jeweils „schwärzen“ oder „nicht schwärzen“ " +
+          "wählen oder mit „Alle Vorschläge übernehmen“ abschließen. Fehlendes mit der Maus auf der Seite einrahmen."),
+        h("li", {}, h("strong", {}, "Anonymisieren: "), "Ein Klick. Das Programm entfernt die Daten unwiderruflich und prüft jedes Ergebnis in vier Stufen – " +
+          "einschließlich echter Versuche, die Daten wiederherzustellen."),
+        h("li", {}, h("strong", {}, "Ergebnis: "), "Grün = bestanden, kann weitergegeben werden. Rot = bitte „Details“ ansehen und nachbessern. " +
+          "„Alle als ZIP“ lädt alle Ergebnisse auf einmal herunter.")),
+      h("p", { class: "muted small" }, "Selbst nachprüfen: anonymisiertes PDF öffnen, Strg+F drücken, einen Namen suchen – er darf nicht gefunden werden."),
       h("h3", {}, "Wichtig"),
       h("ul", {},
         h("li", {}, "Alle Daten bleiben auf diesem Computer. Es wird keine Internetverbindung benötigt."),
         h("li", {}, "Die „Zuordnungstabelle“ hebt die Anonymisierung auf – niemals weitergeben oder hochladen."),
-        h("li", {}, "Unterschriften, Stempel, Fotos und Handschrift bitte selbst mit der Maus einrahmen.")),
+        h("li", {}, "Logos, Unterschriften, Stempel und Fotos auf Textseiten werden automatisch entfernt. " +
+          "Handschrift und Unterschriften auf eingescannten Seiten bitte selbst mit der Maus einrahmen.")),
       h("div", { class: "row", style: "justify-content:flex-end" }, h("button", { class: "btn primary", onclick: close }, "Schließen")))));
 }
 
