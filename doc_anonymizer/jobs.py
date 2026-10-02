@@ -378,6 +378,11 @@ class Worker:
         # Detection gaps found by the verification become training examples.
         if settings.use_learning:
             learning.record_many(self_corrections)
+            # Detected signature areas the user left in place were correct.
+            kept = [b for b in registry.manual_boxes if b.features]
+            learning.record_signatures([(b.features, 1) for b in kept])
+            for b in kept:
+                b.features = []  # count every area only once
 
         # Automatic repairs may have added redactions – keep them for the review.
         registry.labels_frozen = False

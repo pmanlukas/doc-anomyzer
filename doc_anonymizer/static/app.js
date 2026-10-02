@@ -363,6 +363,42 @@ async function viewReview(c) {
       items, open.length > 200 ? h("p", { class: "small muted" }, `… und ${open.length - 200} weitere`) : null, pageItems));
   }
 
+  // ---- automatically found areas: signatures, handwriting, stamps, images ----
+  const AREA_NAMES = { unterschrift: "Unterschrift", handschrift: "Handschrift", stempel: "Stempel", bild: "Bild/Logo" };
+  const areasBox = h("div");
+  async function removeArea(index) {
+    try {
+      await api("DELETE", `/api/cases/${c.id}/manual/${index}`);
+      // Indices shift after a deletion – reload the list.
+      attention = await api("GET", `/api/cases/${c.id}/attention`);
+      drawAreas(); drawPage();
+    } catch (err) { showError(err); }
+  }
+  function drawAreas() {
+    const areas = attention.areas || [];
+    if (!areas.length) { areasBox.replaceChildren(); return; }
+    const counts = {};
+    areas.forEach((a) => { counts[a.kind] = (counts[a.kind] || 0) + 1; });
+    const summaryText = Object.entries(counts).map(([k, n]) => `${n}× ${AREA_NAMES[k] || k}`).join(", ");
+    const rows = areas.slice(0, 100).map((a) => h("div", { class: "entity" },
+      h("span", { class: "count" }, "✎"),
+      h("span", {}, h("strong", {}, AREA_NAMES[a.kind] || a.kind), " ",
+        h("span", { class: "muted small" }, `Dokument ${a.doc + 1}, Seite ${a.page + 1}`)),
+      h("span", {}),
+      h("div", { class: "repl" },
+        h("button", { class: "btn link", onclick: () => showAt(a.doc, a.page) }, "zeigen"),
+        h("button", {
+          class: "btn small", title: "Ist keine Unterschrift/kein personenbezogenes Bild – sichtbar lassen",
+          onclick: () => removeArea(a.index),
+        }, "□ nicht schwärzen"))));
+    areasBox.replaceChildren(h("details", { class: "notice small" },
+      h("summary", {}, h("strong", {}, "Automatisch geschwärzte Bereiche: "), summaryText),
+      h("div", { class: "small muted" }, "Unterschriften, Handschrift, Stempel und kleine Bilder werden vollständig " +
+        "geschwärzt. Falls ein Bereich keine persönlichen Daten enthält, können Sie ihn sichtbar lassen – " +
+        "das Programm lernt daraus."),
+      rows, areas.length > 100 ? h("p", { class: "small muted" }, `… und ${areas.length - 100} weitere`) : null));
+  }
+
   // ---- entity list (left) ----
   const listBox = h("div");
   const filter = h("input", { type: "search", placeholder: "Suchen …", oninput: () => { state.filter = filter.value.toLowerCase(); drawList(); } });
@@ -489,15 +525,17 @@ async function viewReview(c) {
         },
       });
     });
-    const manual = pageData.manual.map((m) => h("div", {
-      class: "hl manual", style: pct(m.rect), title: "Manuell markierter Bereich",
-      onmousedown: (ev) => ev.stopPropagation(),
-    }, h("span", {
-      class: "x", title: "Markierung entfernen",
-      onclick: async () => {
-        try { await api("DELETE", `/api/cases/${c.id}/manual/${m.index}`); drawPage(); } catch (err) { showError(err); }
-      },
-    }, "×")));
+    const manual = pageData.manual.map((m) => {
+      const auto = m.kind && m.kind !== "manuell";
+      return h("div", {
+        class: `hl manual ${auto ? "auto" : ""}`, style: pct(m.rect),
+        title: auto ? `Automatisch erkannt: ${m.label} – wird geschwärzt` : "Manuell markierter Bereich",
+        onmousedown: (ev) => ev.stopPropagation(),
+      }, auto ? h("span", { class: "tag" }, m.label) : null, h("span", {
+        class: "x", title: auto ? "Nicht schwärzen (Bereich bleibt sichtbar)" : "Markierung entfernen",
+        onclick: () => removeArea(m.index),
+      }, "×"));
+    });
     overlay.replaceChildren(...boxes, ...manual);
   }
 
@@ -565,7 +603,7 @@ async function viewReview(c) {
     ...warnings, ...notes,
     h("div", { class: "review" },
       h("div", {},
-        decideBox,
+        decideBox, areasBox,
         h("div", { class: "panel entity-panel" },
           h("h2", { style: "margin-top:0" }, "Gefundene Daten"),
           h("p", { class: "muted small" },
@@ -592,7 +630,7 @@ async function viewReview(c) {
         wrap,
         h("div", { class: "actionbar" }, summary, redactBtn))),
   );
-  drawDecisions();
+  drawDecisions(); drawAreas();
   drawList();
   drawPage();
 }
@@ -740,6 +778,7 @@ async function openSettings() {
   const mapping = h("input", { type: "checkbox", checked: s.write_mapping });
   const learn = h("input", { type: "checkbox", checked: s.use_learning });
   const images = h("input", { type: "checkbox", checked: s.remove_small_images });
+  const signatures = h("input", { type: "checkbox", checked: s.detect_signatures });
   const forensic = h("input", { type: "checkbox", checked: s.forensic_check });
   const autoTrain = h("input", { type: "checkbox", checked: s.auto_train });
   const stats = await api("GET", "/api/learning");
@@ -755,7 +794,7 @@ async function openSettings() {
         security_mode: mode.value, use_gliner: gliner.checked, deep_verification: deep.checked,
         write_mapping: mapping.checked, output_dir: outDir.value, use_learning: learn.checked,
         remove_small_images: images.checked, forensic_check: forensic.checked, auto_train: autoTrain.checked,
-        allow_terms: allow.value.split("\n"),
+        detect_signatures: signatures.checked, allow_terms: allow.value.split("\n"),
         deny_terms: deny.value.split("\n").map((t) => t.trim()).filter(Boolean)
           .map((text) => (s.deny_terms.find((d) => d.text === text) || { text, category: "MANUAL" })),
       });
@@ -778,6 +817,7 @@ async function openSettings() {
       h("details", { class: "advanced" }, h("summary", {}, "Erweiterte Einstellungen"),
       h("h3", {}, "Erkennung und Prüfung"),
       h("label", { class: "check" }, images, "Kleine Bilder auf Textseiten entfernen (Logos, Unterschriften, Stempel, Fotos) – empfohlen"),
+      h("label", { class: "check" }, signatures, "Handschriftliche Unterschriften, Handschrift und Stempel auf Scans erkennen und schwärzen – empfohlen"),
       h("label", { class: "check" }, gliner, "KI-Zusatzmodell GLiNER verwenden, falls installiert (gründlicher, langsamer)"),
       h("label", { class: "check" }, deep, "Prüfstufe 2: alle fertigen Seiten als Bild per Texterkennung kontrollieren (empfohlen)"),
       h("label", { class: "check" }, forensic, "Prüfstufe 3: Wiederherstellungsversuche mit unabhängigen Werkzeugen (empfohlen)"),

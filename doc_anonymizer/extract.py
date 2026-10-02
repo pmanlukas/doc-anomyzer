@@ -26,6 +26,7 @@ from . import ocr
 from .config import Settings
 from .models import PageInfo, Word
 from .parallel import ocr_threads
+from .signatures import detect_in_image, detect_vector_signatures
 
 log = logging.getLogger(__name__)
 
@@ -195,7 +196,11 @@ def analyse_document(path: Path, settings: Settings,
         info.words = words
         pages.append(info)
         if info.kind in ("scan", "mixed"):
-            ocr_jobs.append((page.number, render_page(page, settings.ocr_dpi)))
+            # Colour render: ink colour helps to find signatures.
+            gray = not settings.detect_signatures
+            ocr_jobs.append((page.number, render_page(page, settings.ocr_dpi, gray=gray)))
+        elif settings.detect_signatures:
+            info.signature_boxes = [c.to_list() for c in detect_vector_signatures(page, words)]
         if progress:
             progress(page.number + 1, len(doc), "Seiten lesen")
 
@@ -220,26 +225,35 @@ def _run_ocr(doc: pymupdf.Document, pages: list[PageInfo],
             "Das PDF enthält eingescannte Seiten, aber die Texterkennung (Tesseract) "
             "ist nicht installiert. Bitte „Installieren.bat“ erneut ausführen.")
 
-    def work(job: tuple[int, Image.Image]) -> tuple[int, list[Word]]:
+    def work(job: tuple[int, Image.Image]):
         number, image = job
         scale = 72.0 / settings.ocr_dpi
-        words = ocr.ocr_words(image, scale, settings.ocr_language)
+        gray = image.convert("L") if image.mode != "L" else image
+        words = ocr.ocr_words(gray, scale, settings.ocr_language)
         if settings.thorough_ocr:
             # Second pass in "sparse text" mode catches small print that the
             # layout analysis of the first pass skipped.
-            extra = ocr.ocr_words(image, scale, settings.ocr_language, psm=11)
+            extra = ocr.ocr_words(gray, scale, settings.ocr_language, psm=11)
             words = _merge(words, extra)
-        return number, words
+        signatures = []
+        if settings.detect_signatures:
+            width, height = image.width * scale, image.height * scale
+            try:
+                signatures = detect_in_image(image, width, height, words)
+            except Exception:  # noqa: BLE001 - detection must never stop the analysis
+                log.exception("signature detection failed")
+        return number, words, signatures
 
     with ThreadPoolExecutor(max_workers=ocr_threads()) as pool:
-        for number, words in pool.map(work, jobs):
+        for number, words, signatures in pool.map(work, jobs):
             page = doc[number]
             if page.rotation:
                 mat = page.derotation_matrix
-                for w in words:
-                    r = pymupdf.Rect(w.x0, w.y0, w.x1, w.y1) * mat
-                    w.x0, w.y0, w.x1, w.y1 = r.x0, r.y0, r.x1, r.y1
+                for item in [*words, *signatures]:
+                    r = pymupdf.Rect(item.x0, item.y0, item.x1, item.y1) * mat
+                    item.x0, item.y0, item.x1, item.y1 = r.x0, r.y0, r.x1, r.y1
             info = pages[number]
+            info.signature_boxes = [c.to_list() for c in signatures]
             info.ocr_quality = ocr_quality(words)
             if info.kind == "scan":
                 info.words = _merge(words, info.words)

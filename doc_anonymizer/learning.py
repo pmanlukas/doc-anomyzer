@@ -85,6 +85,11 @@ def load() -> list[Decision]:
 def clear() -> None:
     with _LOCK:
         feedback_path().unlink(missing_ok=True)
+        signature_feedback_path().unlink(missing_ok=True)
+        (home_dir() / "unterschriften_modell.json").unlink(missing_ok=True)
+    from .signatures import load_model
+
+    load_model.cache_clear()
     _changed()
 
 
@@ -149,6 +154,46 @@ def record_many(decisions: list[Decision]) -> None:
     _changed()
 
 
+# ----------------------------------------------------------- signatures
+
+def signature_feedback_path() -> Path:
+    """Feature vectors of detected signature areas with the user's verdict.
+
+    Contains only numbers (no text, no image data).
+    """
+    return home_dir() / "unterschriften_feedback.jsonl"
+
+
+def record_signatures(samples: list[tuple[list[float], int]]) -> bool:
+    """Store keep (0) / remove (1) verdicts and refit the signature model.
+
+    Returns True when a new model was fitted.
+    """
+    samples = [(list(map(float, f)), int(label)) for f, label in samples if f]
+    if not samples:
+        return False
+    with _LOCK, signature_feedback_path().open("a", encoding="utf-8") as fh:
+        for features, label in samples:
+            fh.write(json.dumps({"features": features, "label": label}) + "\n")
+    from .signatures import learn_from_decisions
+
+    return learn_from_decisions(signature_samples())
+
+
+def signature_samples() -> list[tuple[list[float], int]]:
+    path = signature_feedback_path()
+    if not path.exists():
+        return []
+    samples = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        try:
+            item = json.loads(line)
+            samples.append((list(map(float, item["features"])), int(item["label"])))
+        except (ValueError, KeyError, TypeError):
+            continue
+    return samples
+
+
 # ----------------------------------------------------------- training state
 
 def _state_path() -> Path:
@@ -188,5 +233,6 @@ def statistics() -> dict:
             "nicht_mehr_vorschlagen": len(info.keep),
             "gelernte_vornamen": len(learned_first_names()),
             "trainingsbeispiele": sum(len(d.contexts) for d in data),
+            "unterschrift_entscheidungen": len(signature_samples()),
             "letztes_training": state.get("date", ""),
             "trainingsergebnis": state.get("message", "")}

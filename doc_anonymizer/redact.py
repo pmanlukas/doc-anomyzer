@@ -38,6 +38,8 @@ ProgressFn = Callable[[int, int, str], None]
 FILL = (0.86, 0.86, 0.86)  # light grey: clearly visible, still printable
 TEXT_COLOR = (0, 0, 0)
 FONT = "helv"
+#: Automatically detected handwriting areas (see :mod:`doc_anonymizer.signatures`).
+SIGNATURE_KINDS = {"unterschrift", "handschrift", "stempel"}
 
 
 @dataclass
@@ -262,11 +264,25 @@ def redact_document(source: Path, target: Path, doc_index: int, pages: list[Page
                   if b.doc == doc_index and b.page == info.index]
         plan = plan_page(registry, doc_index, info, manual)
         plans.append(plan)
+        # Signatures drawn as vector paths: MuPDF only counts a stroke as
+        # "covered" with a generous margin (line width x miter limit), so a
+        # separate pass removes line art only – text and images untouched.
+        vector_areas = [b for b in manual if b.kind in SIGNATURE_KINDS]
+        if vector_areas:
+            for b in vector_areas:
+                page.add_redact_annot(pymupdf.Rect(b.x0, b.y0, b.x1, b.y1) + (-15, -15, 15, 15),
+                                      fill=False)
+            page.apply_redactions(images=pymupdf.PDF_REDACT_IMAGE_NONE,
+                                  graphics=pymupdf.PDF_REDACT_LINE_ART_REMOVE_IF_COVERED,
+                                  text=pymupdf.PDF_REDACT_TEXT_NONE)
         for box in plan.boxes:
             page.add_redact_annot(_removal_rect(box), fill=False)
         if plan.boxes:
+            # Vector drawings lying completely inside a box are removed
+            # (signatures from signature pads, text converted to outlines);
+            # table lines crossing a box stay.
             page.apply_redactions(images=pymupdf.PDF_REDACT_IMAGE_PIXELS,
-                                  graphics=pymupdf.PDF_REDACT_LINE_ART_NONE,
+                                  graphics=pymupdf.PDF_REDACT_LINE_ART_REMOVE_IF_COVERED,
                                   text=pymupdf.PDF_REDACT_TEXT_REMOVE)
         result.boxes += len(plan.boxes)
         if progress:

@@ -28,6 +28,10 @@ from .lexicon import is_keep_prefix, is_stopword
 from .models import Category, Detection, Entity, ManualBox, Mention, PageInfo
 from .textmap import PageText
 
+#: Labels of automatically detected areas.
+AUTO_BOX_LABELS = {"unterschrift": "[Unterschrift]", "handschrift": "[Handschrift]",
+                   "stempel": "[Stempel]", "bild": "[Bild]"}
+
 #: Categories whose further occurrences are searched as word sequences.
 SEQUENCE_CATEGORIES = {Category.ORG, Category.LOCATION, Category.ADDRESS, Category.MANUAL,
                        Category.CASE_NUMBER, Category.REFERENCE_NUMBER}
@@ -259,6 +263,10 @@ class CaseRegistry:
                 for x0, y0, x1, y1 in page.image_boxes:
                     self.manual_boxes.append(
                         ManualBox(d, page.index, x0, y0, x1, y1, "[Bild]", "bild"))
+                for x0, y0, x1, y1, _score, kind, features in page.signature_boxes:
+                    self.manual_boxes.append(ManualBox(
+                        d, page.index, x0, y0, x1, y1, AUTO_BOX_LABELS.get(kind, "[Handschrift]"),
+                        kind, list(features)))
 
     def _resolve_conflicts(self, detections):
         """Keep the most reliable detection where detections overlap."""

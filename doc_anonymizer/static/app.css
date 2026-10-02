@@ -133,6 +133,9 @@ table.list th { color: var(--muted); font-weight: 600; font-size: .88rem; }
 .hl.off { border-style: dashed; background: transparent !important; opacity: .7; }
 .hl.sel { outline: 3px solid #f5b400; outline-offset: 1px; }
 .hl.manual { background: rgba(20,20,20,.65); border-color: #000; }
+.hl.manual.auto { background: rgba(60,40,140,.55); border-color: #3c288c; }
+.hl .tag { position: absolute; left: 2px; top: 2px; font-size: 11px; color: #fff;
+  background: rgba(0,0,0,.6); padding: 0 4px; border-radius: 2px; pointer-events: none; }
 .hl .x { position: absolute; top: -10px; right: -10px; width: 20px; height: 20px;
   border-radius: 50%; background: var(--bad); color: #fff; font-size: 13px; line-height: 20px;
   text-align: center; cursor: pointer; }

@@ -91,6 +91,8 @@ class Settings:
     remove_small_images: bool = True
     #: An image counts as "small" below this share of the page area.
     small_image_max_coverage: float = 0.25
+    #: Detect handwritten signatures, handwriting and stamps on scans.
+    detect_signatures: bool = True
     #: Stage 2: read every finished page with OCR after anonymisation.
     deep_verification: bool = True
     #: Stage 3: recovery attempts with independent tools (forensics).

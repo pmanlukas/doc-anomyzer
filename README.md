@@ -23,13 +23,17 @@ oder z. B. von einem KI-Sprachmodell analysiert werden.
 
 ## 1. Installation (Windows, einmalig)
 
-1. Ordner an einen beliebigen Ort kopieren (z. B. `C:\Programme\Anonymisierer`
-   oder in die eigenen Dokumente).
+1. **ZIP-Datei entpacken:** Rechtsklick auf `Dokumenten-Anonymisierer_….zip`
+   → „Alle extrahieren …“ (z. B. nach `Dokumente\Dokumenten-Anonymisierer`).
+   Die Kurzanleitung `ANLEITUNG.txt` liegt bei. Das ZIP erzeugt
+   `python tools/build_zip.py`.
 2. **Doppelklick auf `Installieren.bat`.** Das Skript installiert bei Bedarf
-   Python 3.12 und die Texterkennung Tesseract (über `winget`), richtet eine
-   eigene Programmumgebung ein, lädt das deutsche Sprachmodell
-   (ca. 550 MB) und legt eine Verknüpfung auf dem Desktop an.
-   Für diesen Schritt wird einmalig Internet benötigt (nur Downloads).
+   Python 3.12 und die Texterkennung Tesseract (über `winget`, sonst direkt
+   von python.org bzw. GitHub), richtet eine eigene Programmumgebung ein,
+   lädt das deutsche Sprachmodell (ca. 550 MB) und legt eine Verknüpfung auf
+   dem Desktop an. Für diesen Schritt wird einmalig Internet benötigt (nur
+   Downloads). Warnt Windows („Der Computer wurde geschützt“): „Weitere
+   Informationen“ → „Trotzdem ausführen“.
 3. Optional: **`Zusatzmodell_installieren.bat`** installiert das KI-Modell
    GLiNER (ca. 2 GB). Es verbessert die Erkennung, macht die Analyse aber
    langsamer.
@@ -91,6 +95,8 @@ suchen – er darf nicht gefunden werden.
 | Kennnummern | Steuer-ID (Prüfziffer), Steuernummer, SV-/KV-Nummer, Ausweis-/Pass-/Führerscheinnummer, Kfz-Kennzeichen, Kunden-/Vertrags-/Personalnummern, eigene Aktenzeichen, HRB, USt-IdNr., IP-Adressen | `[Nummer n]` … |
 | Geburtsdaten | geb. am 03.04.1978 | `[Geburtsdatum n]` |
 | Sonstige Eigennamen | vom Sprachmodell als Eigenname markiert | `[Name n]` (zur Entscheidung) |
+| Unterschriften, Handschrift, Stempel | handschriftlich auf Scans, gezeichnet mit Unterschrift-Pads/PDF-Werkzeugen | `[Unterschrift]`, `[Handschrift]`, `[Stempel]` |
+| Logos, Fotos | kleine Bilder auf Textseiten | `[Bild]` |
 
 **Bewusst lesbar bleiben:** Gerichte und Behörden („Landgericht München I“),
 Paragraphen und Gesetze, Aktenzeichen *veröffentlichter* Entscheidungen
@@ -115,6 +121,17 @@ Mehrere voneinander unabhängige Verfahren werden kombiniert:
 5. **Texterkennung (OCR) für Scans** mit Tesseract in zwei Durchgängen
    (normale Seitenanalyse + „verstreuter Text“ für Kleingedrucktes,
    Absenderzeilen, Stempel).
+6. **Unterschriften-Erkennung** (OpenCV, `doc_anonymizer/signatures.py`):
+   Auf Scans wird die Seite in Tinte und Papier zerlegt; sicher gelesener
+   Drucktext und lange gerade Linien (Tabellen) werden herausgerechnet. Die
+   übrigen Striche werden zu „Tinteninseln“ zusammengefasst und nach
+   nachvollziehbaren Merkmalen bewertet: farbige Tinte (Kugelschreiber), kein
+   lesbarer Text, Grußformel/„gez.“/Rolle („Rechtsanwältin“) in der Nähe,
+   Größe, Strichdichte, Strich-Komplexität und Höhe des längsten
+   Einzelstrichs (Druckbuchstaben sind auch verwaschen höchstens ca. 3,5 mm
+   hoch). Schwungstriche unter der Unterschrift werden mit erfasst. Auf
+   digitalen Seiten werden gezeichnete Unterschriften als Häufung von
+   Kurvenpfaden erkannt und als Vektorgrafik entfernt.
 
 ## 5. Warum kann die Anonymisierung nicht rückgängig gemacht werden?
 
@@ -174,6 +191,11 @@ Das Programm verbessert sich mit jeder Akte – alles bleibt auf dem Rechner
   es darauf nachweislich besser ist** als das bisherige. Manuell:
   Einstellungen → „Sprachmodell jetzt nachtrainieren“ oder
   `Modell_trainieren.bat`.
+* **Unterschriften:** Lässt der Nutzer eine erkannte Fläche sichtbar
+  („nicht schwärzen“), ist das ein Gegenbeispiel; Flächen, die beim
+  Anonymisieren bestehen bleiben, gelten als bestätigt. Ab 20 Entscheidungen
+  ersetzt ein daraus gelerntes Modell (logistische Regression über dieselben
+  Merkmale) die festen Gewichte. Gespeichert werden nur Zahlen, keine Bilder.
 * Die Startseite zeigt den Lernfortschritt.
 
 Die Lerndaten enthalten Textausschnitte aus den Dokumenten, bleiben auf dem
@@ -221,9 +243,13 @@ Durchrutschen.
   diese Seiten, markiert sie als „schlecht lesbar“ und fordert zur
   Sichtprüfung auf. Bitte dort Namen mit der Maus einrahmen.
 * **Logos, Unterschriften, Stempel und Fotos auf Textseiten** werden
-  automatisch entfernt (abschaltbar). **Handschrift und Unterschriften auf
-  eingescannten Seiten** werden nicht automatisch erkannt – bitte mit der
-  Maus einrahmen.
+  automatisch entfernt (abschaltbar). **Unterschriften auf Scans** werden in
+  den Tests zu 95–100 % gefunden (siehe Abschnitt 8) – sehr kleine Kürzel
+  (Paraphen) oder blasse Bleistift-Unterschriften können fehlen. Die erkannten
+  Flächen stehen in der Prüfansicht oben („Automatisch geschwärzte
+  Bereiche“); bitte Unterschriften kurz kontrollieren und Fehlendes mit der
+  Maus einrahmen. Handschriftliche Randnotizen ohne Grußformel werden nur
+  bei farbiger Tinte zuverlässig erkannt.
 * **Indirekte Identifizierbarkeit** (z. B. „der einzige Kinderarzt im Ort“,
   seltene Berufe, Diagnosen) kann ein Programm nicht sicher beurteilen.
 * Eine automatische Anonymisierung ersetzt nicht die abschließende

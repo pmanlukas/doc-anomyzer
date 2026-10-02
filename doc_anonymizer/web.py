@@ -24,9 +24,12 @@ from .config import Settings, is_cloud_synced
 from .detect import ner
 from .jobs import CaseStore, Worker
 from .models import Category, ManualBox
-from .registry import CaseRegistry
+from .registry import AUTO_BOX_LABELS, CaseRegistry
 
 log = logging.getLogger(__name__)
+
+#: Areas the program marked by itself (shown to the user for a quick look).
+AUTO_KINDS = set(AUTO_BOX_LABELS)
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 CSRF_HEADER = "X-Anonymizer"
@@ -149,7 +152,7 @@ def create_app(store: CaseStore | None = None, start_worker: bool = True) -> Fla
         for key in ("categories", "security_mode", "use_gliner", "deep_verification",
                     "write_mapping", "output_dir", "allow_terms", "deny_terms",
                     "use_learning", "thorough_ocr", "remove_small_images", "forensic_check",
-                    "auto_train"):
+                    "auto_train", "detect_signatures"):
             if key in payload:
                 setattr(settings, key, payload[key])
         if settings.security_mode not in ("standard", "maximum"):
@@ -322,7 +325,12 @@ def create_app(store: CaseStore | None = None, start_worker: bool = True) -> Fla
                   "reviewed": f"{d}:{p.index}" in registry.reviewed_pages}
                  for d, doc_pages in enumerate(registry.docs) for p in doc_pages
                  if p.poorly_readable]
-        return jsonify(uncertain_open=len(open_items), pages=pages)
+        # Automatically found signatures, handwriting, stamps and images: the
+        # user should glance at them (one click keeps an area visible).
+        areas = [{"index": idx, "doc": b.doc, "page": b.page, "kind": b.kind,
+                  "label": b.label}
+                 for idx, b in enumerate(registry.manual_boxes) if b.kind in AUTO_KINDS]
+        return jsonify(uncertain_open=len(open_items), pages=pages, areas=areas)
 
     @app.post("/api/cases/<case_id>/pages/reviewed")
     def page_reviewed(case_id: str):
@@ -440,7 +448,7 @@ def create_app(store: CaseStore | None = None, start_worker: bool = True) -> Fla
         for idx, b in enumerate(registry.manual_boxes):
             if b.doc == doc and b.page == page:
                 r = pymupdf.Rect(b.x0, b.y0, b.x1, b.y1) * matrix
-                manual.append({"index": idx, "label": b.label,
+                manual.append({"index": idx, "label": b.label, "kind": b.kind,
                                "rect": [r.x0, r.y0, r.x1, r.y1]})
         return jsonify(width=width, height=height, kind=info.kind, boxes=boxes,
                        manual=manual, pages=len(registry.docs[doc]))
@@ -466,7 +474,10 @@ def create_app(store: CaseStore | None = None, start_worker: bool = True) -> Fla
         registry = registries.get(case_id)
         if not 0 <= index < len(registry.manual_boxes):
             abort(404)
-        registry.manual_boxes.pop(index)
+        box = registry.manual_boxes.pop(index)
+        if box.features and Settings.load().use_learning:
+            # "Not a signature": a negative example for the signature model.
+            learning.record_signatures([(box.features, 0)])
         registries.save(case_id, registry)
         return jsonify(ok=True)
 
