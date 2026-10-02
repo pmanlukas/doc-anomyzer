@@ -1,0 +1,7 @@
+# Organisationen/Orte, deren Name mit einem dieser Wörter beginnt, bleiben erhalten
+# (Gerichte und Behörden sind keine schutzbedürftigen Personen).
+Amtsgericht Landgericht Oberlandesgericht Kammergericht Bundesgerichtshof Bundesverfassungsgericht Bundesarbeitsgericht Bundessozialgericht Bundesfinanzhof Bundesverwaltungsgericht
+Arbeitsgericht Landesarbeitsgericht Sozialgericht Landessozialgericht Verwaltungsgericht Oberverwaltungsgericht Verwaltungsgerichtshof Finanzgericht Staatsanwaltschaft Generalstaatsanwaltschaft
+Europäischer Europäische Gerichtshof EuGH EGMR BGH BVerfG BAG BSG BFH BVerwG OLG LG AG LAG ArbG SG LSG VG OVG VGH FG KG
+Bundesministerium Bundesamt Bundesagentur Bundeszentralamt Bundesanstalt Bundestag Bundesrat Bundesregierung Landtag Ministerium Senatsverwaltung
+Deutsche Deutschen Deutscher Rentenversicherung Agentur Bundesnetzagentur Bundeskartellamt Landesamt Regierungspräsidium Bezirksregierung Polizeipräsidium Polizeiinspektion Kriminalpolizei

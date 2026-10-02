@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dokumenten-Anonymisierer</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#/" title="Zur Übersicht">
+      <span class="logo" aria-hidden="true">▣</span>
+      <span>Dokumenten-Anonymisierer</span>
+    </a>
+    <span class="badge-local" title="Alle Daten bleiben auf diesem Computer. Es werden keine Daten ins Internet gesendet.">
+      🔒 Läuft nur lokal auf diesem Computer
+    </span>
+    <span class="spacer"></span>
+    <button class="btn ghost" id="btn-help" type="button">Hilfe</button>
+    <button class="btn ghost" id="btn-settings" type="button">Einstellungen</button>
+  </header>
+
+  <main id="app" aria-live="polite"></main>
+
+  <div id="modal-root"></div>
+  <div id="toast" role="status"></div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

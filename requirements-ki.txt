@@ -1,0 +1,3 @@
+# Optionales KI-Zusatzmodell GLiNER (gründlichere Erkennung, ca. 2 GB Speicherplatz).
+# PyTorch bitte als CPU-Version installieren (siehe Zusatzmodell_installieren.bat).
+gliner>=0.2.13
