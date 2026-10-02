@@ -232,6 +232,23 @@ pro Stunde, inklusive aller vier Prüfstufen; 300 von 300 bestanden. Die Dokumen
 Prozesse verteilt; mit mehr Kernen steigt der Durchsatz entsprechend
 (Arbeitsspeicher: ca. 2 GB + 0,5 GB je zusätzlichem Kern).
 
+**Unterschriften** (`tests/signature_docs.py`: erfundene Briefe mit
+synthetischen Unterschriften in blauer/schwarzer Tinte, nach Grußformeln,
+„i. V.“ und auf Unterschriftslinien, teils quer über dem getippten Namen).
+Gemessen auf 36 Dokumenten, die bei der Entwicklung **nicht** verwendet
+wurden; „gefunden“ heißt: mindestens 80 % der Tintenfläche liegen in der
+Schwärzung.
+
+| Scanqualität | Farbe | Schwarz-weiß | Fehlalarme |
+|---|---|---|---|
+| gut | 41/42 | 41/42 | 0 |
+| mittel | 41/42 | 41/42 | 0 |
+| schlecht | 38/42 | 40/42 | 0 |
+| **gesamt** | | **242/252 = 96 %** | **0 auf 252 Seiten** |
+
+Auf echten Dokumenten (ein Scan mit Unterschrift und Gerichtssiegel, ein
+Word-PDF mit Logo) wurden Unterschrift und Siegel gefunden, ohne Fehlalarm.
+
 Wichtig: Wo die automatische Prüfung noch etwas findet, meldet das Programm
 „nicht bestanden“ und fordert zur Entscheidung auf – es gibt kein stilles
 Durchrutschen.
@@ -244,7 +261,7 @@ Durchrutschen.
   Sichtprüfung auf. Bitte dort Namen mit der Maus einrahmen.
 * **Logos, Unterschriften, Stempel und Fotos auf Textseiten** werden
   automatisch entfernt (abschaltbar). **Unterschriften auf Scans** werden in
-  den Tests zu 95–100 % gefunden (siehe Abschnitt 8) – sehr kleine Kürzel
+  den Tests zu 96 % gefunden (siehe Abschnitt 8) – sehr kleine Kürzel
   (Paraphen) oder blasse Bleistift-Unterschriften können fehlen. Die erkannten
   Flächen stehen in der Prüfansicht oben („Automatisch geschwärzte
   Bereiche“); bitte Unterschriften kurz kontrollieren und Fehlendes mit der

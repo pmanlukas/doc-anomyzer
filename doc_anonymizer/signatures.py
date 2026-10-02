@@ -52,7 +52,31 @@ SIGNATURE_CUES = {
     "sachbearbeiter", "sachbearbeiterin", "steuerberater", "arzt", "ärztin", "facharzt",
     "fachärztin", "vermieter", "mieter", "arbeitgeber", "arbeitnehmer", "auftraggeber",
     "kunde", "unterschrieben", "datum,", "(unterschrift)",
+    # First word of the closing formula: the last word ("Grüßen") is often
+    # unreadable because the signature crosses it.
+    "freundlichen", "freundlichem", "kollegialen", "kollegialem", "herzlichen",
+    "herzlichem",
 }
+#: Abbreviations written as two tokens ("i. V.", "i. A.").
+_CUE_PAIRS = {("i.", "v."), ("i.", "a."), ("i:", "v."), ("i,", "v.")}
+
+
+def _near_cue(token: str) -> bool:
+    """Cue word with at most one OCR misread letter (only long words)."""
+    if len(token) < 6:
+        return False
+    for cue in SIGNATURE_CUES:
+        if abs(len(cue) - len(token)) > 1 or len(cue) < 6:
+            continue
+        # Edit distance <= 1 (substitution, insertion or deletion).
+        if len(cue) == len(token):
+            if sum(a != b for a, b in zip(cue, token)) <= 1:
+                return True
+        else:
+            short, long_ = sorted((cue, token), key=len)
+            if any(long_[:i] + long_[i + 1:] == short for i in range(len(long_))):
+                return True
+    return False
 FEATURES = ["color", "unreadable", "cue", "lower", "size", "density", "complexity"]
 #: Hand-tuned weights (used until enough user decisions exist).
 DEFAULT_WEIGHTS = {"color": 0.30, "unreadable": 0.15, "cue": 0.30, "lower": 0.05,
@@ -145,10 +169,12 @@ def learn_from_decisions(samples: list[tuple[list[float], int]], min_samples: in
 def _cue_rects(words: list[Word], scale: float) -> list[tuple[float, float, float, float]]:
     """Pixel boxes of words that typically precede a signature."""
     rects = []
-    for w in words:
+    tokens = [w.text.lower().strip("„“\"()") for w in words]
+    for i, (w, token) in enumerate(zip(words, tokens)):
         # lower(), not casefold(): casefold turns "Grüße" into "grüsse".
-        token = w.text.lower().strip("„“\"()")
-        if token in SIGNATURE_CUES or token.rstrip(",.:") in SIGNATURE_CUES \
+        bare = token.rstrip(",.:")
+        pair = i + 1 < len(words) and (token, tokens[i + 1]) in _CUE_PAIRS
+        if token in SIGNATURE_CUES or bare in SIGNATURE_CUES or pair or _near_cue(bare) \
                 or set(token) <= {"_", "."} and len(token) >= 8:
             rects.append((w.x0 / scale, w.y0 / scale, w.x1 / scale, w.y1 / scale))
     return rects
@@ -196,10 +222,18 @@ def detect_in_image(image: Image.Image, page_width: float, page_height: float,
     # 2) Remove long straight lines (tables, underlines, frames).
     # 25 mm: long enough that steep strokes of a signature survive.
     with_lines = strokes.copy()  # for the flourish step at the end
+    signature_lines: list[tuple[int, int, int, int]] = []
     for size in ((int(25 * mm), 1), (1, int(25 * mm))):
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT, size)
         lines = cv2.morphologyEx(strokes, cv2.MORPH_OPEN, kernel)
         strokes = cv2.subtract(strokes, cv2.dilate(lines, np.ones((3, 3), np.uint8)))
+        if size[1] == 1:
+            # Thin horizontal lines of 30-120 mm: signature lines ("______"),
+            # which OCR often does not report as text.
+            n_l, _, l_stats, _ = cv2.connectedComponentsWithStats(lines, connectivity=8)
+            for lx, ly, lw, lh, _a in l_stats[1:n_l]:
+                if 30 * mm <= lw <= 120 * mm and lh <= 2 * mm:
+                    signature_lines.append((lx, ly, lx + lw, ly + lh))
     # Speckles (scan noise) away. No morphological opening: a thin ballpoint
     # stroke is only ~1 px wide at WORK_DPI and would vanish. Tiny isolated
     # components are dropped instead; strokes are long and connected.
@@ -261,6 +295,11 @@ def detect_in_image(image: Image.Image, page_width: float, page_height: float,
             below = cy0 >= y + h * 0.4 and cy0 - (y + h) <= 15 * mm and \
                 cx0 <= x + w and cx1 >= x
             if above or beside or below:
+                cue = 1.0
+                break
+        for lx0, ly0, lx1, ly1 in signature_lines if not cue else ():
+            # Line just above, crossing or just below the island.
+            if lx0 < x + w and x < lx1 and y - 12 * mm <= ly0 <= y + h + 8 * mm:
                 cue = 1.0
                 break
         size_ok = 1.0 if 25 * mm <= w <= 110 * mm and 6 * mm <= h <= 40 * mm else 0.4

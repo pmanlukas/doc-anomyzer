@@ -299,8 +299,9 @@ async function viewReview(c) {
 
   // ---- "Bitte entscheiden": uncertain findings and poorly readable pages ----
   const decideBox = h("div");
-  function showAt(doc, page, id) {
-    state.selected = id || null; state.doc = doc; state.page = page; drawList(); drawPage();
+  function showAt(doc, page, id, area) {
+    state.selected = id || null; state.area = area ?? null; state.scroll = true;
+    state.doc = doc; state.page = page; drawList(); drawPage();
   }
   async function decide(e, redact) {
     try {
@@ -386,7 +387,7 @@ async function viewReview(c) {
         h("span", { class: "muted small" }, `Dokument ${a.doc + 1}, Seite ${a.page + 1}`)),
       h("span", {}),
       h("div", { class: "repl" },
-        h("button", { class: "btn link", onclick: () => showAt(a.doc, a.page) }, "zeigen"),
+        h("button", { class: "btn link", onclick: () => showAt(a.doc, a.page, null, a.index) }, "zeigen"),
         h("button", {
           class: "btn small", title: "Ist keine Unterschrift/kein personenbezogenes Bild – sichtbar lassen",
           onclick: () => removeArea(a.index),
@@ -528,7 +529,7 @@ async function viewReview(c) {
     const manual = pageData.manual.map((m) => {
       const auto = m.kind && m.kind !== "manuell";
       return h("div", {
-        class: `hl manual ${auto ? "auto" : ""}`, style: pct(m.rect),
+        class: `hl manual ${auto ? "auto" : ""} ${state.area === m.index ? "sel" : ""}`, style: pct(m.rect),
         title: auto ? `Automatisch erkannt: ${m.label} – wird geschwärzt` : "Manuell markierter Bereich",
         onmousedown: (ev) => ev.stopPropagation(),
       }, auto ? h("span", { class: "tag" }, m.label) : null, h("span", {
@@ -537,6 +538,13 @@ async function viewReview(c) {
       }, "×"));
     });
     overlay.replaceChildren(...boxes, ...manual);
+    if (state.scroll) {  // "zeigen": bring the marked spot into view
+      state.scroll = false;
+      const target = overlay.querySelector(".hl.sel");
+      const go = () => target && target.scrollIntoView({ block: "center", behavior: "smooth" });
+      // Positions are only right once the page image has its size.
+      if (img.complete) go(); else img.addEventListener("load", go, { once: true });
+    }
   }
 
   // Draw additional redaction areas with the mouse.
@@ -867,8 +875,8 @@ function openHelp() {
       h("ul", {},
         h("li", {}, "Alle Daten bleiben auf diesem Computer. Es wird keine Internetverbindung benötigt."),
         h("li", {}, "Die „Zuordnungstabelle“ hebt die Anonymisierung auf – niemals weitergeben oder hochladen."),
-        h("li", {}, "Logos, Unterschriften, Stempel und Fotos auf Textseiten werden automatisch entfernt. " +
-          "Handschrift und Unterschriften auf eingescannten Seiten bitte selbst mit der Maus einrahmen.")),
+        h("li", {}, "Logos, Fotos, handschriftliche Unterschriften, Handschrift und Stempel werden automatisch erkannt und geschwärzt. " +
+          "Sie stehen in der Prüfansicht unter „Automatisch geschwärzte Bereiche“. Fehlt etwas, bitte mit der Maus einrahmen.")),
       h("div", { class: "row", style: "justify-content:flex-end" }, h("button", { class: "btn primary", onclick: close }, "Schließen")))));
 }
 

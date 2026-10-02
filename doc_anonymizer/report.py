@@ -56,6 +56,11 @@ def verification_report(case: "Case", doc: "DocumentInfo", verification: "Verifi
     counts: Counter[str] = Counter()
     labels: dict[str, set[str]] = {}
     doc_index = next(i for i, d in enumerate(case.documents) if d is doc)
+    areas = Counter(b.kind for b in registry.manual_boxes if b.doc == doc_index)
+    area_text = ", ".join(f"{n} × {name}" for kind, name in (
+        ("unterschrift", "Unterschrift"), ("handschrift", "Handschrift"), ("stempel", "Stempel"),
+        ("bild", "Bild/Logo"), ("manuell", "manuell markierter Bereich"))
+        if (n := areas.get(kind)))
     for m in registry.mentions:
         entity = registry.entities[m.entity_id]
         if m.doc == doc_index and entity.enabled:
@@ -132,6 +137,8 @@ Auffälligkeiten wurden dem Nutzer zur Entscheidung vorgelegt.</li>
 <li>Eingebettete Schriften wurden auf die verbliebenen Zeichen reduziert; versteckte
 Alternativtexte (ActualText/Alt) entfernt; kleine Bilder (Logos, Unterschriften, Fotos)
 entfernt, sofern der Nutzer sie nicht ausdrücklich behalten hat.</li>
+<li>Geschwärzte Flächen: {_e(area_text or "keine")}. Handschriftliche Unterschriften,
+Handschrift und Stempel auf Scans werden automatisch erkannt.</li>
 </ul>
 <p class="muted">Hinweis: Eine automatische Anonymisierung kann eine abschließende
 Sichtkontrolle nicht vollständig ersetzen. Bitte insbesondere Unterschriften, Stempel,

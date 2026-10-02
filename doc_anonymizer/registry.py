@@ -734,15 +734,24 @@ class CaseRegistry:
         """
         strong = lambda src: src not in learning.WEAK_SOURCES and src != "weitergabe"  # noqa: E731
         low_conf: set[str] = set()
+        #: Entities with at least one mention outside detected signature areas.
+        outside_signatures: set[str] = set()
         for m in self.mentions:
-            words = [self.docs[m.doc][m.page].words[i] for i in m.word_indices]
+            page = self.docs[m.doc][m.page]
+            words = [page.words[i] for i in m.word_indices]
             if words and all(w.source == "ocr" and w.conf < 50 for w in words):
                 low_conf.add(m.entity_id)
+            if not all(_inside_any(w, page.signature_boxes) for w in words):
+                outside_signatures.add(m.entity_id)
         for entity in self.entities.values():
             if entity.decided or entity.forms.get("edited"):
                 continue
             reason = ""
-            if entity.category is Category.OTHER_NAME:
+            if entity.id not in outside_signatures:
+                # OCR "letters" read from a signature: the whole area is
+                # blacked out anyway – nothing to decide.
+                pass
+            elif entity.category is Category.OTHER_NAME:
                 reason = "Möglicher Eigenname – bitte entscheiden"
             elif not any(strong(src) for src in entity.sources):
                 reason = "Nur vom Sprachmodell erkannt – bitte bestätigen"
@@ -831,3 +840,9 @@ class CaseRegistry:
         reg.reviewed_pages = list(data.get("reviewed_pages", []))
         reg._recompute_covered()
         return reg
+
+
+def _inside_any(word, boxes: list[list]) -> bool:
+    """Is the centre of the word inside one of the [x0, y0, x1, y1, ...] boxes?"""
+    cx, cy = (word.x0 + word.x1) / 2, (word.y0 + word.y1) / 2
+    return any(b[0] <= cx <= b[2] and b[1] <= cy <= b[3] for b in boxes)

@@ -55,6 +55,14 @@ def test_signature_is_removed_from_output(tmp_path, settings):
     registry = CaseRegistry([pages], settings)
     registry.build([Detector(settings).detect_document(pages)])
     assert any(b.kind == "unterschrift" for b in registry.manual_boxes)
+    # OCR "letters" read from the signature are not offered for decision.
+    from doc_anonymizer.registry import _inside_any
+
+    for entity in registry.entities.values():
+        if entity.uncertain:
+            mentions = [m for m in registry.mentions if m.entity_id == entity.id]
+            assert any(not _inside_any(pages[m.page].words[i], pages[m.page].signature_boxes)
+                       for m in mentions for i in m.word_indices), entity.original
     target = tmp_path / "ergebnis.pdf"
     result = anonymise_document(path, target, 0, pages, registry, settings)
     assert result.verification.passed
