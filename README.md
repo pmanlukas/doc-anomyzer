@@ -21,29 +21,63 @@ oder z. B. von einem KI-Sprachmodell analysiert werden.
 
 ---
 
-## 1. Installation (Windows, einmalig)
+## 1. Installation (Windows)
 
-1. **ZIP-Datei entpacken:** Rechtsklick auf `Dokumenten-Anonymisierer_….zip`
-   → „Alle extrahieren …“ (z. B. nach `Dokumente\Dokumenten-Anonymisierer`).
-   Die Kurzanleitung `ANLEITUNG.txt` liegt bei. Das ZIP erzeugt
-   `python tools/build_zip.py`.
-2. **Doppelklick auf `Installieren.bat`.** Das Skript installiert bei Bedarf
-   Python 3.12 und die Texterkennung Tesseract (über `winget`, sonst direkt
-   von python.org bzw. GitHub), richtet eine eigene Programmumgebung ein,
-   lädt das deutsche Sprachmodell (ca. 550 MB) und legt eine Verknüpfung auf
-   dem Desktop an. Für diesen Schritt wird einmalig Internet benötigt (nur
-   Downloads). Warnt Windows („Der Computer wurde geschützt“): „Weitere
-   Informationen“ → „Trotzdem ausführen“.
-3. Optional: **`Zusatzmodell_installieren.bat`** installiert das KI-Modell
-   GLiNER (ca. 2 GB). Es verbessert die Erkennung, macht die Analyse aber
-   langsamer.
+**Empfohlen: `Dokumenten-Anonymisierer-Setup.exe`** – wie ein normales
+Windows-Programm (Anleitung für Nutzer: `ANLEITUNG.txt`, 3 Schritte):
 
-Danach läuft das Programm vollständig offline.
+1. Doppelklick auf die Setup.exe. Warnt Windows („Der Computer wurde durch
+   Windows geschützt“): „Weitere Informationen“ → „Trotzdem ausführen“
+   (das Setup ist nicht code-signiert).
+2. „Installieren“ → „Fertigstellen“ (Haken „Programm jetzt starten“).
+3. Künftig: Symbol „Dokumenten-Anonymisierer“ auf dem Desktop/im Startmenü.
+
+Eigenschaften des Setups:
+
+* **komplett offline** – Python 3.12, alle Pakete, das deutsche Sprachmodell
+  `de_core_news_lg`, Tesseract und die OCR-Sprachdateien (deu/eng/osd) sind
+  enthalten; bei der Installation wird nichts heruntergeladen,
+* **ohne Administratorrechte** – Programmordner
+  `%LOCALAPPDATA%\Programs\Dokumenten-Anonymisierer`, keine UAC-Abfrage,
+* **kein Konsolenfenster** – das Programm öffnet direkt den Browser; ein
+  zweiter Klick auf das Symbol öffnet nur den Browser erneut,
+* **Beenden** über die Schaltfläche „Beenden“ oben rechts – oder gar nicht:
+  ist einige Minuten keine Programmseite im Browser geöffnet und läuft keine
+  Verarbeitung, beendet sich das Programm selbst. Schläft der Browser-Tab
+  ein, zeigt die Seite beim Zurückkehren einen Hinweis und verbindet sich
+  nach dem Neustart über das Symbol von selbst wieder,
+* Startprobleme erscheinen als verständliche Windows-Meldung; Details stehen
+  in `%LOCALAPPDATA%\DocAnonymizer\logs\programm.log`,
+* **Update** = neue Setup.exe ausführen (ein laufendes Programm wird vorher
+  beendet). **Deinstallation** über „Apps & Features“.
+
+Nutzerdaten liegen **getrennt** vom Programm und bleiben bei Update und
+Deinstallation erhalten: Akten, Einstellungen, Lernstand und das
+nachtrainierte Sprachmodell in `%LOCALAPPDATA%\DocAnonymizer`, die
+Ergebnisse in `%USERPROFILE%\Anonymisiert`.
+
+Die Setup.exe wird von GitHub Actions gebaut und auf einem frischen Windows
+getestet (`.github/workflows/windows-setup.yml`, `installer/`): stille
+Installation, Selbsttest, Anonymisierung von Test-PDFs über die Kommandozeile
+und über das laufende Programm, Zweitstart, Beenden, selbstständiges Beenden,
+Update bei laufendem Programm, Deinstallation. Download: Actions → Lauf
+„Windows-Setup“ → Artefakt „Dokumenten-Anonymisierer-Setup“.
+
+**Alternative: ZIP + `Installieren.bat`** (lädt Python, Tesseract und das
+Sprachmodell bei der Installation aus dem Internet; ZIP erzeugen mit
+`python tools/build_zip.py`):
+
+1. ZIP entpacken, im entpackten Ordner doppelt auf `Installieren.bat`
+   klicken (SmartScreen-Hinweis wie oben).
+2. Start mit `Start.bat` bzw. der Desktop-Verknüpfung (ein Konsolenfenster
+   bleibt geöffnet, solange das Programm läuft).
+3. Optional: `Zusatzmodell_installieren.bat` installiert das KI-Modell
+   GLiNER (ca. 2 GB, nur in dieser Variante).
 
 ## 2. Bedienung
 
-1. **Start:** Doppelklick auf „Dokumenten-Anonymisierer“ (Desktop) bzw.
-   `Start.bat`. Der Browser öffnet sich mit der Oberfläche. Der Browser dient
+1. **Start:** Doppelklick auf „Dokumenten-Anonymisierer“ (Desktop oder
+   Startmenü). Der Browser öffnet sich mit der Oberfläche. Der Browser dient
    nur als Anzeige – das Programm ist ausschließlich auf diesem Computer
    erreichbar (`127.0.0.1`).
 2. **Dokumente ablegen:** PDF-Dateien **oder einen ganzen Ordner** auf die
@@ -151,7 +185,7 @@ Mehrere voneinander unabhängige Verfahren werden kombiniert:
 
 | Stufe | Was wird geprüft | Wirkung bei Fund |
 |---|---|---|
-| 1 – Textprüfung | Alle Originalbegriffe (inkl. jedes einzelnen Namensteils) im gesamten Text der fertigen Datei inkl. unsichtbarem Text, im Dateinamen und in der Textfassung; Dateistruktur (Metadaten, Anhänge …) | automatische Nachschwärzung, erneute Prüfung |
+| 1 – Textprüfung | Alle Originalbegriffe (inkl. jedes einzelnen Namensteils, Zahlen OCR-tolerant: „DEO2“ = „DE02“) im gesamten Text der fertigen Datei inkl. unsichtbarem Text, im Dateinamen und in der Textfassung; **Reste von IBANs**, auch wenn die Erkennung sie nicht kannte (z. B. „DE02 1203“ neben einer Schwärzung); Dateistruktur (Metadaten, Anhänge …) | automatische Nachschwärzung, erneute Prüfung |
 | 2 – Bildprüfung | Jede fertige Seite wird als Bild gerendert und per OCR gelesen – geprüft wird, was ein Mensch oder eine KI tatsächlich *sieht* | automatische Nachschwärzung genau dieser Stellen, erneute Prüfung |
 | 3 – Wiederherstellungsversuche | Ein „Angreifer“ versucht die Daten zurückzuholen: Suche in allen PDF-Rohobjekten und entpackten Datenströmen (auch UTF-16/Hex), Textauslesen mit unabhängigen Programmen (pypdf, pdfminer, pdftotext), OCR aller eingebetteten Bilder in Originalauflösung (auch abgeschnittene/unsichtbare Bildteile), Abgleich der Dokumentkennung | betroffene Seite wird komplett als Bild neu aufgebaut, erneute Prüfung |
 | 4 – Nachkontrolle | Erkennung läuft erneut über das Ergebnis | Hinweise zur Entscheidung durch den Nutzer |
@@ -222,7 +256,7 @@ Messwerte (Stand dieser Version, ohne GLiNER, 4 CPU-Kerne):
 | 24 gemischte Akten (⅓ Scans guter Qualität) | 292 | **100 %** | bestanden |
 | 12 Scans mittlerer Qualität | 146 | **100 %** | bestanden |
 | 12 Scans schlechter Qualität (150 dpi, verwaschen, schief) | 146 | **100 %** | bestanden |
-| 12 Scans sehr schlechter Qualität (Fax-Niveau, 120 dpi) | 146 | 98,6 % | Seiten als „schlecht lesbar“ zur Sichtprüfung markiert |
+| 12 Scans sehr schlechter Qualität (Fax-Niveau, 120 dpi) | 146 | 97,3–98,6 % (je nach Stichprobe) | Seiten als „schlecht lesbar“ zur Sichtprüfung markiert |
 | 1 Akte, 300 Seiten digital | 3 128 | **100 %** | bestanden, 4,7 min |
 | 1 Akte, 100 Seiten Scan schlechter Qualität | 1 042 | **100 %** | 2 OCR-Fehltreffer zur Nutzerentscheidung, 6,5 min |
 
@@ -299,6 +333,8 @@ Aufbau des Pakets `doc_anonymizer/`:
 | `verify.py`, `forensics.py`, `process.py` | vier Prüfstufen, Wiederherstellungsversuche, automatische Nachbesserung |
 | `learning.py`, `train.py` | Lernen aus Entscheidungen, Nachtrainieren |
 | `jobs.py`, `parallel.py`, `web.py`, `static/` | Akten, parallele Hintergrundverarbeitung, Oberfläche |
+| `launcher.py` | Start des installierten Programms (ohne Konsole, Einzelinstanz, Selbstbeenden) |
+| `installer/` | Windows-Setup (Inno Setup), Build- und Testskripte für GitHub Actions |
 
 Lizenzhinweis: PyMuPDF steht unter AGPL-3.0 (bzw. kommerzieller Lizenz von
 Artifex). Für die interne Nutzung in einer Kanzlei ist das unproblematisch; bei
