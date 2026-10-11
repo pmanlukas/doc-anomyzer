@@ -93,7 +93,11 @@ def make_pool(documents: int) -> ProcessPoolExecutor | None:
     if workers < 2:
         return None
     from .config import home_dir
+    from .detect.ner import prepare_known_words
 
+    # Shared files the workers would otherwise all create at the same time
+    # (Windows does not allow replacing a file another process is reading).
+    prepare_known_words()
     threads = max(1, (os.cpu_count() or 2) // workers)
     # "spawn" on every platform: identical behaviour on Windows and Linux and
     # no inherited threads/locks of the web server.

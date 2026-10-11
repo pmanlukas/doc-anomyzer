@@ -90,11 +90,28 @@ def _known_words() -> frozenset[str]:
                 words.append(strings[key])
             except KeyError:
                 continue
-        tmp = path.with_suffix(".tmp")
-        tmp.write_text("\n".join(words), encoding="utf-8")
-        tmp.replace(path)
+        # Several worker processes may get here at the same time: each writes
+        # its own temporary file. On Windows the file cannot be replaced while
+        # another process reads it – then that process' copy is used and this
+        # one is simply dropped (the content is identical).
+        tmp = path.with_name(f"{path.stem}.{os.getpid()}.tmp")
+        try:
+            tmp.write_text("\n".join(words), encoding="utf-8")
+            tmp.replace(path)
+        except OSError as exc:
+            log.info("Wortliste nicht gespeichert (%s) – wird im Speicher verwendet", exc)
+        finally:
+            tmp.unlink(missing_ok=True)
         return frozenset(words)
     return frozenset(path.read_text(encoding="utf-8").split("\n"))
+
+
+def prepare_known_words() -> None:
+    """Create the word list once before worker processes start (no race)."""
+    try:
+        _known_words()
+    except RuntimeError:  # no language model – handled where it is needed
+        pass
 
 
 @lru_cache(maxsize=200_000)

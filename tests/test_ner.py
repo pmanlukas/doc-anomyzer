@@ -51,3 +51,27 @@ def test_spacy_filters_ordinary_words(settings):
     found = {d.text: d for d in Detector(settings).detect_page(text, 0, res)}
     assert "Brzęczyszczykiewicz" in found
     assert "Unzutreffend" not in found and "III" not in found
+
+
+def test_known_words_export_survives_concurrent_access(monkeypatch, tmp_path):
+    """Windows: the word list cannot be replaced while another worker process
+    reads it. The export must then go on with the list in memory."""
+    from pathlib import Path
+
+    from doc_anonymizer.detect import ner
+
+    ner._known_words.cache_clear()
+    target = ner._known_words_file()
+    target.unlink(missing_ok=True)
+
+    def locked(self, other):
+        raise PermissionError(32, "The process cannot access the file because it is "
+                                  "being used by another process")
+
+    monkeypatch.setattr(Path, "replace", locked)
+    try:
+        words = ner._known_words()
+    finally:
+        ner._known_words.cache_clear()
+    assert len(words) > 100_000
+    assert not list(target.parent.glob("*.tmp"))  # no leftovers
