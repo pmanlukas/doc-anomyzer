@@ -173,7 +173,9 @@ def _extract_with_other_parsers(path: Path) -> dict[str, list[str]]:
     if tool:
         try:
             out = subprocess.run([tool, "-layout", str(path), "-"], capture_output=True,  # noqa: S603
-                                 text=True, timeout=300, check=False).stdout
+                                 text=True, timeout=300, check=False,
+                                 # no console window flashing up (pythonw)
+                                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout
             texts["pdftotext"] = out.split("\f")
         except Exception as exc:  # noqa: BLE001 - optional tool
             log.info("pdftotext not usable: %s", exc)

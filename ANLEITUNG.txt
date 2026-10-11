@@ -1,0 +1,40 @@
+﻿DOKUMENTEN-ANONYMISIERER – EINRICHTEN IN 3 SCHRITTEN
+====================================================
+
+Das Programm schwärzt personenbezogene Daten in PDF-Dateien. Es arbeitet
+ausschließlich auf Ihrem Computer – es werden keine Dokumente ins Internet
+gesendet. Für die Einrichtung wird kein Internet und kein Administrator
+benötigt.
+
+
+1. Doppelklick auf „Dokumenten-Anonymisierer-Setup.exe“
+
+   Erscheint „Der Computer wurde durch Windows geschützt“:
+   auf „Weitere Informationen“ klicken, dann auf „Trotzdem ausführen“.
+   (Diese Meldung erscheint, weil das Programm nicht kostenpflichtig
+   signiert ist. Sie kommt nur beim Einrichten.)
+
+
+2. Auf „Installieren“ und danach auf „Fertigstellen“ klicken.
+
+   Das Einrichten dauert etwa 1–2 Minuten. Mit dem Haken
+   „Programm jetzt starten“ öffnet sich das Programm sofort.
+
+
+3. Künftig: Doppelklick auf das Symbol „Dokumenten-Anonymisierer“
+   auf dem Desktop (oder im Startmenü).
+
+   Das Programm öffnet sich im Browser. Ein weiteres Fenster gibt es
+   nicht. Zum Beenden oben rechts auf „Beenden“ klicken – oder einfach den
+   Browser schließen: Das Programm beendet sich nach ein paar Minuten von
+   selbst.
+
+
+Gut zu wissen
+-------------
+• Ergebnisse: im Ordner „Anonymisiert“ in Ihrem Benutzerordner.
+  Den Unterordner „VERTRAULICH_nicht_weitergeben“ niemals weitergeben.
+• Neue Version: einfach die neue Setup.exe ausführen. Akten, Einstellungen
+  und Gelerntes bleiben erhalten.
+• Entfernen: Windows-Einstellungen → Apps → „Dokumenten-Anonymisierer“ →
+  Deinstallieren. Ihre Akten und Ergebnisse bleiben erhalten.

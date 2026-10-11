@@ -47,8 +47,13 @@ def load_spacy():
     """Load the best installed German spaCy model (cached)."""
     import spacy
 
-    custom = MODELS_DIR / "spacy_angepasst"
-    candidates = ([str(custom)] if (custom / "meta.json").exists() else []) + list(SPACY_MODELS)
+    from ..config import custom_model_dir
+
+    # The fine-tuned model lives in the user folder; older versions stored it
+    # next to the program.
+    custom = [str(p) for p in (custom_model_dir(), MODELS_DIR / "spacy_angepasst")
+              if (p / "meta.json").exists()][:1]
+    candidates = custom + list(SPACY_MODELS)
     for name in candidates:
         try:
             # Only the components we need: tokenizer, tagger (proper nouns), NER.

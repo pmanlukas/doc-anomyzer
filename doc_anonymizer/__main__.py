@@ -117,6 +117,10 @@ def main(argv: list[str] | None = None) -> int:
     batch.add_argument("--ausgabe", type=Path)
     batch.add_argument("--still", action="store_true")
     args = parser.parse_args(argv)
+    for stream in (sys.stdout, sys.stderr):
+        # A Windows console cannot show every character – never crash on output.
+        if stream is not None and hasattr(stream, "reconfigure"):
+            stream.reconfigure(errors="replace")
 
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
     if args.command == "check":

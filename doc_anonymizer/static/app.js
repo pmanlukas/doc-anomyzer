@@ -880,6 +880,58 @@ function openHelp() {
       h("div", { class: "row", style: "justify-content:flex-end" }, h("button", { class: "btn primary", onclick: close }, "Schließen")))));
 }
 
+// ------------------------------------------------------------ program state
+// The installed Windows program has no window of its own: the server ends
+// itself when no page has been open for a few minutes. This page sends a
+// sign of life, offers "Beenden" and reconnects after a restart.
+const lifeline = { failures: 0, banner: null, ended: false };
+
+async function heartbeat() {
+  if (lifeline.ended) return;
+  try {
+    await api("POST", "/api/heartbeat");
+    lifeline.failures = 0;
+    if (lifeline.banner) location.reload();  // the program runs again
+  } catch (err) {
+    lifeline.failures += 1;
+    if (lifeline.failures >= 2 && !lifeline.banner) {
+      lifeline.banner = h("div", { class: "modal-back" }, h("div", { class: "modal" },
+        h("h1", {}, "Das Programm läuft nicht mehr"),
+        h("p", {}, "Es wurde beendet – zum Beispiel automatisch nach einer längeren Pause. Ihre Akten sind gespeichert."),
+        h("p", {}, h("strong", {}, "Zum Weiterarbeiten: "),
+          "auf dem Desktop doppelt auf „Dokumenten-Anonymisierer“ klicken. Diese Seite verbindet sich dann von selbst wieder.")));
+      document.body.append(lifeline.banner);
+    }
+  }
+}
+
+async function quitProgram() {
+  if (!confirm("Programm beenden?\n\nIhre Akten und Ergebnisse bleiben gespeichert.")) return;
+  const post = (body) => fetch("/api/shutdown", {
+    method: "POST", headers: { "X-Anonymizer": "1", "Content-Type": "application/json" },
+    body: JSON.stringify(body || {}),
+  });
+  try {
+    let resp = await post();
+    if (resp.status === 409) {
+      if (!confirm("Es läuft gerade noch eine Verarbeitung. Trotzdem beenden?\n\n" +
+        "Die laufende Verarbeitung muss dann später neu gestartet werden.")) return;
+      resp = await post({ trotzdem: true });
+    }
+    if (!resp.ok) throw new Error(`Fehler ${resp.status}`);
+    lifeline.ended = true;
+    render(h("div", { class: "panel" }, h("h1", {}, "Das Programm wurde beendet"),
+      h("p", {}, "Sie können dieses Browserfenster jetzt schließen. Zum erneuten Start auf dem Desktop doppelt auf „Dokumenten-Anonymisierer“ klicken.")));
+  } catch (err) { showError(err); }
+}
+
+setInterval(heartbeat, 30000);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) heartbeat(); });
+api("GET", "/api/status").then((s) => {
+  const quit = document.getElementById("btn-quit");
+  if (s && s.managed) { quit.hidden = false; quit.addEventListener("click", quitProgram); }
+}).catch(() => {});
+
 document.getElementById("btn-settings").addEventListener("click", () => openSettings().catch(showError));
 document.getElementById("btn-help").addEventListener("click", openHelp);
 route();

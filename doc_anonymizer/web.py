@@ -14,6 +14,7 @@ import os
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 
 import pymupdf
@@ -66,13 +67,22 @@ class RegistryCache:
             self._cache = {case_id: (mtime, registry)}
 
 
-def create_app(store: CaseStore | None = None, start_worker: bool = True) -> Flask:
+def create_app(store: CaseStore | None = None, start_worker: bool = True,
+               managed: bool = False, on_shutdown=None) -> Flask:
+    """The local web application.
+
+    ``managed``: started by the Windows program (:mod:`.launcher`) – the page
+    then sends signs of life and offers a "Beenden" button; ``on_shutdown``
+    is called when the user ends the program.
+    """
     app = Flask(__name__, static_folder=None)
     app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 ** 3  # 2 GB uploads (large case files)
     store = store or CaseStore()
     worker = Worker(store) if start_worker else None
     registries = RegistryCache(store)
-    app.extensions["anonymizer"] = {"store": store, "worker": worker}
+    #: last sign of life of a browser page (time.monotonic())
+    life = {"last_seen": None, "connected": False}
+    app.extensions["anonymizer"] = {"store": store, "worker": worker, "life": life}
 
     # ------------------------------------------------------------ security
 
@@ -84,6 +94,11 @@ def create_app(store: CaseStore | None = None, start_worker: bool = True) -> Fla
         if request.method not in ("GET", "HEAD", "OPTIONS") and \
                 request.headers.get(CSRF_HEADER) != "1":
             abort(403)
+        if request.path.startswith("/api/") and request.path != "/api/ping":
+            # Any request of the page counts as a sign of life (not the
+            # launcher's "is it running?" ping).
+            life["last_seen"] = time.monotonic()
+            life["connected"] = True
 
     @app.after_request
     def _headers(resp):
@@ -126,6 +141,29 @@ def create_app(store: CaseStore | None = None, start_worker: bool = True) -> Fla
 
     # -------------------------------------------------------- status/settings
 
+    @app.get("/api/ping")
+    def ping():
+        """Cheap check for the launcher: is *this program* listening here?"""
+        return jsonify(app="dokumenten-anonymisierer", version=__version__)
+
+    @app.post("/api/heartbeat")
+    def heartbeat():
+        busy = bool(worker and worker.busy)
+        return jsonify(ok=True, busy=busy)
+
+    @app.post("/api/shutdown")
+    def shutdown():
+        """End the program (only when started by the Windows program)."""
+        if not managed or on_shutdown is None:
+            abort(404)
+        if worker is not None and worker.busy and not (request.get_json(silent=True) or {}).get(
+                "trotzdem"):
+            return jsonify(ok=False, busy=True,
+                           error="Es läuft gerade noch eine Verarbeitung."), 409
+        # Answer first, then end.
+        threading.Timer(0.5, on_shutdown).start()
+        return jsonify(ok=True)
+
     @app.get("/api/status")
     def status():
         try:
@@ -135,7 +173,7 @@ def create_app(store: CaseStore | None = None, start_worker: bool = True) -> Fla
             spacy_ok = False
         return jsonify(version=__version__, spacy=spacy_ok, tesseract=ocr.is_available(),
                        tesseract_languages=ocr.available_languages(),
-                       gliner=ner.gliner_installed(), platform=sys.platform)
+                       gliner=ner.gliner_installed(), platform=sys.platform, managed=managed)
 
     @app.get("/api/settings")
     def get_settings():

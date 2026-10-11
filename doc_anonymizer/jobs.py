@@ -170,15 +170,22 @@ class Worker:
         self.store = store
         self.jobs: queue.Queue[tuple[str, str]] = queue.Queue()
         self.training = {"running": False, "message": ""}
+        self._active = 0  # jobs currently being processed
         self.thread = threading.Thread(target=self._run, name="anonymizer-worker", daemon=True)
         self.thread.start()
 
     def submit(self, case_id: str, action: str) -> None:
         self.jobs.put((case_id, action))
 
+    @property
+    def busy(self) -> bool:
+        """Is a job running or waiting? (The program must not end then.)"""
+        return bool(self._active) or not self.jobs.empty() or self.training["running"]
+
     def _run(self) -> None:
         while True:
             case_id, action = self.jobs.get()
+            self._active += 1
             try:
                 if action == "analyse":
                     self.analyse(case_id)
@@ -196,6 +203,8 @@ class Worker:
                     self.store.save(case)
                 except KeyError:
                     pass
+            finally:
+                self._active -= 1
 
     # ------------------------------------------------------------- learning
 

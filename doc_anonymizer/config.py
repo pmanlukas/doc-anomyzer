@@ -24,7 +24,11 @@ APP_ROOT = Path(__file__).resolve().parent.parent
 #: Bundled word lists (first names, stop words ...).
 DATA_DIR = Path(__file__).resolve().parent / "data"
 #: Locally stored AI models / OCR language files (downloaded once by setup).
+#: Part of the program – read only; updates replace it.
 MODELS_DIR = Path(os.environ.get("DOC_ANONYMIZER_MODELS", APP_ROOT / "models"))
+#: Tesseract shipped with the Windows setup (preferred over an installed one).
+BUNDLED_TESSERACT = APP_ROOT / "tesseract" / (
+    "tesseract.exe" if sys.platform.startswith("win") else "tesseract")
 
 
 def home_dir() -> Path:
@@ -38,6 +42,22 @@ def home_dir() -> Path:
         base = Path.home() / ".doc_anonymizer"
     base.mkdir(parents=True, exist_ok=True)
     return base
+
+
+def user_models_dir() -> Path:
+    """Models the program creates itself (fine-tuned language model).
+
+    They belong to the user's learning progress and therefore live in the
+    user folder – an update or uninstall of the program never deletes them.
+    """
+    path = home_dir() / "modelle"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def custom_model_dir() -> Path:
+    """Location of the fine-tuned spaCy model."""
+    return user_models_dir() / "spacy_angepasst"
 
 
 def default_output_dir() -> Path:

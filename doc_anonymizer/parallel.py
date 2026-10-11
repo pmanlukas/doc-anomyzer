@@ -23,6 +23,7 @@ from __future__ import annotations
 import logging
 import multiprocessing
 import os
+import sys
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -77,6 +78,12 @@ def _init_worker(ocr_threads_per_worker: int, home: str) -> None:
     os.environ["DOC_ANONYMIZER_OCR_THREADS"] = str(ocr_threads_per_worker)
     os.environ["DOC_ANONYMIZER_HOME"] = home
     os.environ.setdefault("OMP_THREAD_LIMIT", "1")
+    # Started from pythonw.exe (installed program): there is no console, so
+    # stdout/stderr are None – libraries writing to them must not crash.
+    if sys.stdout is None:
+        sys.stdout = open(os.devnull, "w", encoding="utf-8")  # noqa: SIM115
+    if sys.stderr is None:
+        sys.stderr = open(os.devnull, "w", encoding="utf-8")  # noqa: SIM115
     logging.basicConfig(level=logging.WARNING)
 
 

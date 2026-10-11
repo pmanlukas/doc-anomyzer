@@ -24,11 +24,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import learning
-from .config import MODELS_DIR
+from .config import custom_model_dir
 
 log = logging.getLogger(__name__)
 
-CUSTOM_MODEL_DIR = MODELS_DIR / "spacy_angepasst"
 MIN_EXAMPLES = 20
 LEARN_RATE = 0.001
 LABELS = {"PERSON": "PER", "ORG": "ORG", "LOCATION": "LOC", "ADDRESS": "LOC",
@@ -122,7 +121,7 @@ def train(epochs: int = 12, seed: int = 0, progress=print) -> dict:
     test, train_set = samples[:cut], samples[cut:]
 
     base = load_spacy()
-    base_name = CUSTOM_MODEL_DIR if CUSTOM_MODEL_DIR.exists() else next(
+    base_name = custom_model_dir() if custom_model_dir().exists() else next(
         n for n in SPACY_MODELS if spacy.util.is_package(n))
     nlp = spacy.load(base_name)
     before = _score(nlp, test)
@@ -145,11 +144,11 @@ def train(epochs: int = 12, seed: int = 0, progress=print) -> dict:
     progress(f"Nachher: Trefferquote {after[0]:.0%}, Fehlalarme {after[1]:.0%}")
     better = after[0] > before[0] or (after[0] == before[0] and after[1] < before[1])
     if better:
-        tmp = CUSTOM_MODEL_DIR.with_name(CUSTOM_MODEL_DIR.name + "_neu")
+        tmp = custom_model_dir().with_name(custom_model_dir().name + "_neu")
         shutil.rmtree(tmp, ignore_errors=True)
         nlp.to_disk(tmp)
-        shutil.rmtree(CUSTOM_MODEL_DIR, ignore_errors=True)
-        tmp.rename(CUSTOM_MODEL_DIR)
+        shutil.rmtree(custom_model_dir(), ignore_errors=True)
+        tmp.rename(custom_model_dir())
         load_spacy.cache_clear()
     return {"ok": better, "before": before, "after": after, "examples": len(samples),
             "message": "Angepasstes Modell gespeichert." if better else
@@ -160,9 +159,9 @@ def reset() -> None:
     """Delete the fine-tuned model (back to the original spaCy model)."""
     from .detect.ner import load_spacy
 
-    shutil.rmtree(CUSTOM_MODEL_DIR, ignore_errors=True)
+    shutil.rmtree(custom_model_dir(), ignore_errors=True)
     load_spacy.cache_clear()
 
 
 def custom_model_path() -> Path | None:
-    return CUSTOM_MODEL_DIR if (CUSTOM_MODEL_DIR / "meta.json").exists() else None
+    return custom_model_dir() if (custom_model_dir() / "meta.json").exists() else None

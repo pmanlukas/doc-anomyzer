@@ -15,7 +15,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from .config import MODELS_DIR
+from .config import BUNDLED_TESSERACT, MODELS_DIR
 from .models import Word
 
 # Typical installation folders of the UB Mannheim Windows build.
@@ -38,7 +38,13 @@ class OcrUnavailableError(RuntimeError):
 
 @lru_cache(maxsize=1)
 def tesseract_cmd() -> str | None:
-    """Locate the tesseract executable (``None`` if it is not installed)."""
+    """Locate the tesseract executable (``None`` if it is not installed).
+
+    The copy shipped with the Windows setup comes first: it matches the
+    bundled language files and needs no separate installation.
+    """
+    if BUNDLED_TESSERACT.exists():
+        return str(BUNDLED_TESSERACT)
     env = os.environ.get("TESSERACT_CMD")
     if env and Path(env).exists():
         return env

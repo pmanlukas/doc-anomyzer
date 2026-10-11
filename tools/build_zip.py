@@ -20,7 +20,7 @@ sys.path.insert(0, str(ROOT))
 from doc_anonymizer import __version__  # noqa: E402
 
 #: Top-level files shipped to the user.
-FILES = ["ANLEITUNG.txt", "Installieren.bat", "Start.bat", "Modell_trainieren.bat",
+FILES = ["installer/ANLEITUNG_ZIP.txt", "Installieren.bat", "Start.bat", "Modell_trainieren.bat",
          "Zusatzmodell_installieren.bat", "README.md", "LICENSE", "requirements.txt",
          "requirements-ki.txt"]
 #: Never shipped, whatever lies in the working copy.
@@ -46,7 +46,10 @@ def build(target_dir: Path) -> Path:
             data = path.read_bytes()
             if path.suffix == ".bat" and b"\r\n" not in data:
                 data = data.replace(b"\n", b"\r\n")  # cmd.exe needs CRLF
-            zf.writestr(f"{folder}/{path.relative_to(ROOT).as_posix()}", data)
+            name = path.relative_to(ROOT).as_posix()
+            if name == "installer/ANLEITUNG_ZIP.txt":
+                name = "ANLEITUNG.txt"  # the guide for this variant
+            zf.writestr(f"{folder}/{name}", data)
     return target
 
 
