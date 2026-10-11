@@ -16,7 +16,12 @@ from pathlib import Path
 
 from .config import MODELS_DIR
 
-TESSDATA_URL = "https://github.com/tesseract-ocr/tessdata_best/raw/main/{lang}.traineddata"
+#: Direct address first (no redirect – works behind more firewalls), then
+#: the GitHub web address as a fallback.
+TESSDATA_URLS = (
+    "https://raw.githubusercontent.com/tesseract-ocr/tessdata_best/main/{lang}.traineddata",
+    "https://github.com/tesseract-ocr/tessdata_best/raw/main/{lang}.traineddata",
+)
 
 
 def _download(url: str, target: Path) -> None:
@@ -41,7 +46,14 @@ def tessdata(languages: tuple[str, ...] = ("deu", "eng", "osd")) -> None:
         if target.exists() and target.stat().st_size > 1_000_000:
             print(f"  {target.name} bereits vorhanden")
             continue
-        _download(TESSDATA_URL.format(lang=lang), target)
+        for n, url in enumerate(TESSDATA_URLS, 1):
+            try:
+                _download(url.format(lang=lang), target)
+                break
+            except OSError as exc:  # HTTPError/URLError are OSErrors
+                print(f"\n  {target.name}: Download fehlgeschlagen ({exc})")
+                if n == len(TESSDATA_URLS):
+                    raise
 
 
 def gliner() -> None:

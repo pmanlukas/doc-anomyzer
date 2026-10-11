@@ -85,7 +85,12 @@ if errorlevel 1 (
     echo  https://github.com/UB-Mannheim/tesseract/wiki
 )
 echo  Deutsche Sprachdateien fuer die Texterkennung werden geladen ...
-"%VPY%" -m doc_anonymizer.setup_helper tessdata || goto :error
+"%VPY%" -m doc_anonymizer.setup_helper tessdata
+if errorlevel 1 (
+    echo  [HINWEIS] Die deutschen Sprachdateien konnten nicht geladen werden.
+    echo  Digitale PDFs funktionieren trotzdem. Fuer Scans bitte spaeter
+    echo  "Installieren.bat" noch einmal starten.
+)
 
 rem --- 5. Verknuepfung auf dem Desktop -----------------------------------
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
