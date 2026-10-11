@@ -34,6 +34,7 @@ from .detect.pipeline import Detector
 from .extract import clean_word, render_page
 from .forensics import forensic_check
 from .parallel import ocr_threads
+from .detect.patterns import NUMERIC_IBAN_COUNTRIES
 from .lexicon import is_keep_prefix, is_stopword
 from .models import Category, PageInfo, Word
 from .registry import (CaseRegistry, FuzzyIndex, levenshtein_at_most, misread_candidate,
@@ -123,7 +124,40 @@ def search_terms(registry: CaseRegistry, doc_index: int | None = None
 
 
 def _compact(text: str) -> str:
-    return "".join(ch for ch in text.casefold() if ch.isalnum())
+    """Numbers without spacing; OCR letter/digit confusions mapped ("DEO2" = "DE02")."""
+    return "".join(ch for ch in text.casefold() if ch.isalnum()).translate(_OCR_DIGIT_KEY)
+
+
+_OCR_DIGIT_KEY = str.maketrans({"o": "0", "i": "1", "l": "1"})
+
+#: Beginning of an IBAN: country code, check digits, digit groups (OCR-tolerant).
+_IBAN_FRAGMENT = re.compile(
+    r"(?<![\p{L}\p{N}])(?:" + "|".join(sorted(NUMERIC_IBAN_COUNTRIES | {
+        "CH", "LI", "LU", "NL", "FR", "IT", "GB", "IE", "MC"}))
+    + r") ?[\dOoIl]{2}(?:[ ]?[\dOoIl]{2,4}){1,8}(?![\p{L}\p{N}])")
+
+
+def iban_fragments(text: str) -> list[str]:
+    """Visible remains of an IBAN in anonymised text (CONFIDENTIAL).
+
+    Reported are IBAN beginnings ("DE02 1203") that
+    * stand next to a placeholder ("DE02 1203 [Telefon 3]"), i.e. only part
+      of the number was redacted,
+    * follow the word "IBAN", or
+    * still show at least three digit groups.
+    """
+    found = []
+    for match in _IBAN_FRAGMENT.finditer(text):
+        value = match.group(0)
+        if text.rfind("[", 0, match.start()) > text.rfind("]", 0, match.start()):
+            continue  # inside a placeholder
+        groups = len(re.findall(r"[\dOoIl]{2,4}", value[4:]))
+        after = text[match.end():match.end() + 3].lstrip(" .,:;")
+        before = text[max(0, match.start() - 12):match.start()]
+        if groups >= 3 or after.startswith("[") or before.rstrip(" .,:;").endswith("]") \
+                or re.search(r"IBAN\W*$", before, re.IGNORECASE):
+            found.append(value)
+    return found
 
 
 #: Categories whose terms are proper names: in German always capitalised.
@@ -296,6 +330,10 @@ def verify_document(output: Path, doc_index: int, expected_pages: int,
             if _contains(hay, term, compact, category):
                 result.leaks.append(Leak(page.number + 1, category.value, entity_id, term,
                                          "Textebene"))
+        for fragment in iban_fragments(" ".join(w[4] for w in words)):
+            # Part of an IBAN survived (e.g. the rest was taken for a phone number).
+            result.leaks.append(Leak(page.number + 1, Category.IBAN.value, "", fragment,
+                                     "Textebene (IBAN-Rest)"))
         pages_for_scan.append(PageInfo(page.number, page.rect.width, page.rect.height,
                                        [Word(*w[:5], "text", int(w[5]) * 1000 + int(w[6]))
                                         for w in words]))
@@ -403,6 +441,9 @@ def _image_check(doc: pymupdf.Document, terms, settings: Settings,
                     if hit:
                         result.leaks.append(Leak(number + 1, category.value, entity_id, term,
                                                  "Bild (OCR)", _leak_boxes(boxes, term)))
+                for fragment in iban_fragments(" ".join(words)):
+                    result.leaks.append(Leak(number + 1, Category.IBAN.value, "", fragment,
+                                             "Bild (OCR, IBAN-Rest)", _leak_boxes(boxes, fragment)))
                 if progress:
                     progress(number + 1, doc.page_count, "Prüfstufe 2: Bildprüfung")
 

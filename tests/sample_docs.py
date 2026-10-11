@@ -77,3 +77,54 @@ def make_scanned_pdf(path: Path, dpi: int = 200) -> Path:
     out.save(path)
     path.with_suffix(".tmp.pdf").unlink()
     return path
+
+
+#: Letter from the Windows field test (fictitious data): a scanned IBAN that
+#: was only half redacted, an e-mail at the end of a sentence before the
+#: closing formula and a "Personal-Nr." field.
+BANK_LETTER = ["Bäckerei Lindner GmbH", "Personalabteilung", "",
+               "Sehr geehrte Frau Kretschmer,",
+               "bitte überweisen Sie den Betrag auf folgendes Konto:",
+               "IBAN DE02 1203 0000 0000 2020 51.", "Personal-Nr.: 4471", "",
+               "Bei Fragen erreichen Sie uns unter s.kretschmer@baeckerei-lindner-test.de.",
+               "Mit freundlichen Grüßen", "Sabine Kretschmer"]
+
+
+def _arial_like(size: int):
+    """Arial or a metrically identical font (Liberation Sans), else a fallback."""
+    from PIL import ImageFont
+
+    for name in ("arial.ttf", "LiberationSans-Regular.ttf",
+                 "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+                 "DejaVuSans.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"):
+        try:
+            return ImageFont.truetype(name, size)
+        except OSError:
+            continue
+    return ImageFont.load_default(size)
+
+
+def make_bank_letter_scan(path: Path, dpi: int = 200, px: int = 36, angle: float = 0.6,
+                          blur: float = 0.8) -> Path:
+    """Image-only scan like in the field test: 200 dpi, Arial ~36 px, 0.6° skew, blurred."""
+    import io
+
+    from PIL import Image, ImageDraw, ImageFilter
+
+    width, height = int(8.27 * dpi), int(11.69 * dpi)
+    img = Image.new("L", (width, height), 255)
+    draw = ImageDraw.Draw(img)
+    font = _arial_like(px)
+    y = int(1.3 * dpi)
+    for line in BANK_LETTER:
+        draw.text((int(0.9 * dpi), y), line, font=font, fill=20)
+        y += int(px * 1.5)
+    img = img.rotate(angle, resample=Image.BICUBIC, fillcolor=255)
+    img = img.filter(ImageFilter.GaussianBlur(blur))
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=85)
+    doc = pymupdf.open()
+    page = doc.new_page(width=595, height=842)
+    page.insert_image(page.rect, stream=buf.getvalue())
+    doc.save(path)
+    return path

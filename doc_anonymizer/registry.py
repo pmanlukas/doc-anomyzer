@@ -65,9 +65,17 @@ def normalise_word(word: str) -> str:
     return normalise(word.strip(_PUNCT))
 
 
+#: Letters OCR reads instead of digits ("DEO2" for "DE02").
+_OCR_DIGIT_KEY = str.maketrans({"o": "0", "i": "1", "l": "1"})
+
+
 def _compact(text: str) -> str:
-    """Key for numbers: letters and digits only (spacing is irrelevant)."""
-    return "".join(ch for ch in text.casefold() if ch.isalnum())
+    """Key for numbers: letters and digits only (spacing is irrelevant).
+
+    Letters that OCR confuses with digits are mapped to the digit, so the
+    same number read once as "DE02" and once as "DEO2" is one entity.
+    """
+    return "".join(ch for ch in text.casefold() if ch.isalnum()).translate(_OCR_DIGIT_KEY)
 
 
 def initial(name: str) -> str:

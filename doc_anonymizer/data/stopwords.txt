@@ -36,3 +36,9 @@ Rentenversicherung Krankenversicherung Krankenkasse Pflegekasse Unfallversicheru
 Kanzlei Rechtsanwälte Rechtsanwaltskanzlei Praxis Klinik Klinikum Krankenhaus Hotel Bank Sparkasse Volksbank Stadtwerke
 Eingang Eingegangen Posteingang Abschrift Ausfertigung Zweitausfertigung Original Kopie Entwurf Anlage Fachanwalt Fachanwältin
 Telefon Telefax Fax Mobil Handy Internet Homepage Web Mail E-Mail Email Tel Durchwahl Zentrale Sprechzeiten Bankverbindung Konto Kontoinhaber Verwendungszweck
+# Abkürzungen von Nummern-/Zeichenfeldern in Briefköpfen und Formularen
+Personal-Nr Personal-Nr. Personalnr Personalnummer Kunden-Nr Kunden-Nr. Kundennr Kundennummer
+Vertrags-Nr Vertragsnr Vertragsnummer Mitglieds-Nr Mitgliedsnummer Rechnungs-Nr Rechnungsnr Rechnungsnummer
+Auftrags-Nr Auftragsnummer Bestell-Nr Bestellnummer Akten-Nr Aktennr Versicherungs-Nr Versicherungsnummer
+Schaden-Nr Schadennummer Policen-Nr Steuer-Nr Steuernr Tel-Nr Telefon-Nr Fax-Nr Haus-Nr Hausnr Nr Nr.
+Az Az. Gz Gz. Aktenz Aktenzeichen Geschäftszeichen Unser-Zeichen Ihr-Zeichen Zeichen

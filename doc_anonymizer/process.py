@@ -58,6 +58,11 @@ def _repair(source: Path, doc_index: int, registry: CaseRegistry,
                         changed.add(page.index)
                         fixes += 1
                 continue
+            if not leak.entity_id and leak.page >= 1:
+                # Remains of a number no detection covered (IBAN fragment).
+                fixes += _cover_fragment(registry, doc_index, pages[leak.page - 1], leak,
+                                         pdf[leak.page - 1].derotation_matrix, changed)
+                continue
             entity = registry.entities.get(leak.entity_id)
             if entity is None or leak.page < 1:
                 continue
@@ -89,6 +94,35 @@ def _repair(source: Path, doc_index: int, registry: CaseRegistry,
     if fixes:
         registry.assign_labels()
     return fixes, changed
+
+
+def _cover_fragment(registry: CaseRegistry, doc_index: int, page: PageInfo, leak,
+                    derot: pymupdf.Matrix, changed: set[int]) -> int:
+    """Black out the words of a leaked fragment with a box ("[IBAN]")."""
+    from .verify import _compact
+
+    rects = [pymupdf.Rect(*r) * derot for r in leak.rects]
+    if not rects:
+        # Text-layer finding: locate the fragment's words in the source page.
+        wanted = [_compact(t) for t in leak.term.split() if _compact(t)]
+        keys = [_compact(w.text) for w in page.words]
+        for i in range(len(keys)):
+            joined, j = "", i
+            while j < len(keys) and len(joined) < len("".join(wanted)):
+                joined += keys[j]
+                j += 1
+            if keys[i] and joined == "".join(wanted):
+                rects = [pymupdf.Rect(w.x0, w.y0, w.x1, w.y1) for w in page.words[i:j]]
+                break
+    fixes = 0
+    for r in rects:
+        r.normalize()
+        box = ManualBox(doc_index, page.index, r.x0, r.y0, r.x1, r.y1, "[IBAN]")
+        if box not in registry.manual_boxes:
+            registry.manual_boxes.append(box)
+            changed.add(page.index)
+            fixes += 1
+    return fixes
 
 
 def anonymise_document(source: Path, target: Path, doc_index: int, pages: list[PageInfo],

@@ -60,14 +60,40 @@ def _digits(text: str) -> str:
     return "".join(ch for ch in text if ch.isdigit())
 
 
-def iban_valid(text: str) -> bool:
-    """ISO 13616 check (mod 97 == 1)."""
-    compact = re.sub(r"\s", "", text).upper()
+#: Countries whose IBAN contains only digits after the country code. There,
+#: letters that OCR confuses with digits ("DEO2" for "DE02") can be mapped back.
+NUMERIC_IBAN_COUNTRIES = {
+    "DE", "AT", "BE", "CZ", "DK", "EE", "ES", "FI", "FO", "GL", "HR", "HU", "IL", "LT",
+    "NO", "PL", "PT", "RS", "SE", "SI", "SK", "TN", "TR",
+}
+#: Letters OCR reads instead of digits.
+OCR_DIGITS = str.maketrans({"O": "0", "o": "0", "D": "0", "Q": "0", "I": "1", "l": "1",
+                            "|": "1", "i": "1", "S": "5", "s": "5", "B": "8", "Z": "2",
+                            "z": "2", "G": "6"})
+
+
+def _iban_checksum_ok(compact: str) -> bool:
     if not re.fullmatch(r"[A-Z]{2}\d{2}[A-Z0-9]{11,30}", compact):
         return False
     rearranged = compact[4:] + compact[:4]
     number = "".join(str(int(ch, 36)) for ch in rearranged)
     return int(number) % 97 == 1
+
+
+def iban_ocr_normalised(text: str) -> str:
+    """IBAN without spaces; OCR letter/digit confusions repaired where safe."""
+    compact = re.sub(r"\s", "", text)
+    country, rest = compact[:2].upper(), compact[2:]
+    check, bban = rest[:2].translate(OCR_DIGITS), rest[2:]
+    if country in NUMERIC_IBAN_COUNTRIES:
+        bban = bban.translate(OCR_DIGITS)
+    return (country + check + bban).upper()
+
+
+def iban_valid(text: str) -> bool:
+    """ISO 13616 check (mod 97 == 1), tolerant of OCR confusions ("DEO2")."""
+    compact = re.sub(r"\s", "", text).upper()
+    return _iban_checksum_ok(compact) or _iban_checksum_ok(iban_ocr_normalised(text))
 
 
 def luhn_valid(text: str) -> bool:
@@ -126,17 +152,33 @@ RULES: list[Rule] = [
          _r(r"[\w.%+\-]+@[\w\-]+(?:\.[\w\-]+)*\.\p{L}{2,}")),
     # E-mail addresses torn apart by OCR: "bekir.weihmann@ hotmail.de",
     # "konstantinos. meister @ web.de".
+    # Only spaces (no line breaks) may tear the address apart, and the parts
+    # are lower case: otherwise the next sentence ("…-test.de.⏎Mit
+    # freundlichen Grüßen") or the previous one ("Ende. max@…") is swallowed.
     Rule("email_ocr", Category.EMAIL,
-         _r(r"[\w%+\-]+(?:\.\s?[\w%+\-]+)*\s?@\s?[\w\-]+(?:\s?\.\s?[\w\-]+)*"
-            r"(?:\s?\.\s?\p{L}{2,})?"),
+         _r(r"(?<![\w.%+\-])[\p{Ll}\d][\w%+\-]*(?: ?\. ?[\p{Ll}\d][\w%+\-]*)* ?@ ?"
+            r"[\p{Ll}\d][\p{Ll}\d\-]*(?:\.[\p{Ll}\d][\p{Ll}\d\-]*)*"
+            # "web. de": a space after the dot only before a known ending.
+            r"(?: ?\. ?(?:de|com|net|org|eu|info|biz|at|ch|io|nl|fr|it|es|pl|be|lu|dk|se|"
+            r"online|email|law|legal)(?![\p{L}\d]))?"),
          priority=91),
     Rule("url", Category.URL,
          _r(r"(?:https?://|www\.)[^\s<>\"“”]+[^\s<>\"“”.,;:)\]]")),
     Rule("domain", Category.URL,
          _r(r"(?<![@\w.\-/])[a-z0-9][a-z0-9\-]{1,62}\.(?:de|com|net|org|eu|info|biz|at|ch|io)\b"
             r"(?:/[^\s]*[^\s.,;:)])?", re.IGNORECASE)),
+    # Check digits and groups may contain letters OCR confuses with digits
+    # ("DEO2 12O3"); the checksum (after repairing them) decides.
     Rule("iban", Category.IBAN,
-         _r(r"\b[A-Z]{2}\d{2}(?:\s?[A-Z0-9]{1,4}){3,8}\b"), validator=iban_valid, priority=100),
+         _r(r"\b[A-Z]{2} ?[\dOoIlDQSBZ]{2}(?:\s?[A-Z0-9oil]{1,4}){3,8}\b"), validator=iban_valid,
+         priority=100),
+    # IBAN-shaped even if the checksum fails (a misread digit): country code
+    # plus groups of four digits. Ranks above telephone numbers.
+    Rule("iban_loose", Category.IBAN,
+         _r(r"\b(?:" + "|".join(sorted(NUMERIC_IBAN_COUNTRIES | {"CH", "LI", "LU", "NL", "FR",
+                                                                  "IT", "GB", "IE", "MC"}))
+            + r") ?[\dOoIl]{2}(?:[ ]?[\dOoIl]{4}){3,7}(?:[ ]?[\dOoIl]{1,3})?(?![\dA-Za-z])"),
+         priority=98),
     Rule("bic", Category.BIC,
          _r(r"(?:BIC|SWIFT)(?:-Code)?:? ?([A-Z]{4} ?[A-Z]{2} ?[A-Z0-9]{2}(?: ?[A-Z0-9]{3})?)\b"),
          group=1, priority=95),
