@@ -68,13 +68,14 @@ def make_digital_pdf(path: Path) -> Path:
 
 def make_scanned_pdf(path: Path, dpi: int = 200) -> Path:
     """A 'scan': the letter rendered to an image, no text layer."""
-    digital = pymupdf.open(make_digital_pdf(path.with_suffix(".tmp.pdf")))
-    out = pymupdf.open()
-    for page in digital:
-        pix = page.get_pixmap(dpi=dpi, colorspace=pymupdf.csGRAY)
-        new = out.new_page(width=page.rect.width, height=page.rect.height)
-        new.insert_image(new.rect, pixmap=pix)
-    out.save(path)
+    # Closed before deleting: Windows cannot delete a file that is still open.
+    with pymupdf.open(make_digital_pdf(path.with_suffix(".tmp.pdf"))) as digital, \
+            pymupdf.open() as out:
+        for page in digital:
+            pix = page.get_pixmap(dpi=dpi, colorspace=pymupdf.csGRAY)
+            new = out.new_page(width=page.rect.width, height=page.rect.height)
+            new.insert_image(new.rect, pixmap=pix)
+        out.save(path)
     path.with_suffix(".tmp.pdf").unlink()
     return path
 
