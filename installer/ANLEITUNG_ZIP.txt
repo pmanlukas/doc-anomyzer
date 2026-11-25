@@ -45,12 +45,14 @@ geöffnet lassen, solange Sie arbeiten. Zum Beenden das Fenster schließen.
 2) „Prüfen“: Das Programm zeigt, was es gefunden hat. Unsichere Stellen
    und erkannte Unterschriften/Stempel stehen oben. Mit einem Klick
    entscheiden – oder fehlende Stellen mit der Maus einrahmen.
-3) „Anonymisieren“: Die fertigen PDFs, Prüfberichte und Textfassungen
-   liegen im Ordner „Anonymisiert“ in Ihrem Benutzerordner.
+3) „Anonymisieren und speichern“: Die fertigen, geprüften PDFs,
+   Prüfberichte und Textfassungen liegen im Ordner „Anonymisiert“ in Ihrem
+   Benutzerordner – je Akte ein Unterordner, der als Ganzes weitergegeben
+   werden kann.
 
 Die Zuordnungstabelle (welcher Name welche Abkürzung bekommen hat) liegt
-getrennt im Unterordner „VERTRAULICH_nicht_weitergeben“. Diesen Ordner
-niemals weitergeben.
+getrennt davon im Ordner „VERTRAULICH_nicht_weitergeben“ am selben
+Speicherort. Diesen Ordner niemals weitergeben.
 
 
 5. HILFE BEI PROBLEMEN

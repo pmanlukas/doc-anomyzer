@@ -6,9 +6,11 @@
 ; * completely offline: Python, packages, language model, Tesseract and the
 ;   OCR language files are inside the setup – nothing is downloaded,
 ; * no administrator rights: installs to %LOCALAPPDATA%\Programs,
-; * user data (settings, learning progress, results) lives elsewhere
-;   (%LOCALAPPDATA%\DocAnonymizer, %USERPROFILE%\Anonymisiert) and survives
-;   updates and uninstallation. An update = run a newer setup.
+; * user data (settings, learning progress, working copies of documents)
+;   lives elsewhere (%LOCALAPPDATA%\DocAnonymizer) and survives updates.
+;   An update = run a newer setup. When uninstalling, the user is asked
+;   whether this data shall be deleted as well; the finished results
+;   (%USERPROFILE%\Anonymisiert or the chosen folder) are never touched.
 
 #ifndef AppVersion
   #define AppVersion "0.0.0"
@@ -102,4 +104,24 @@ begin
   if FileExists(Python) then
     Exec(Python, '-m doc_anonymizer.launcher --beenden', ExpandConstant('{app}'),
          SW_HIDE, ewWaitUntilTerminated, ResultCode);
+end;
+
+// Uninstall: the working data contains copies of original documents and the
+// names found in them. Ask whether it shall go as well (never in silent
+// mode - there the data stays).
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  Data: String;
+begin
+  if (CurUninstallStep = usPostUninstall) and not UninstallSilent then
+  begin
+    Data := ExpandConstant('{localappdata}\DocAnonymizer');
+    if DirExists(Data) then
+      if MsgBox('Sollen auch die Arbeitsdaten des Programms gelöscht werden?' + #13#10 + #13#10 +
+                'Das sind die gespeicherten Akten (Kopien Ihrer Originaldokumente), ' +
+                'Ihre Einstellungen und alles, was das Programm gelernt hat.' + #13#10 + #13#10 +
+                'Ihre fertigen, anonymisierten Dateien bleiben in jedem Fall erhalten.',
+                mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES then
+        DelTree(Data, True, True, True);
+  end;
 end;

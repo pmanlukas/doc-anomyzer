@@ -24,14 +24,14 @@ import logging
 import multiprocessing
 import os
 import sys
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, Future, ProcessPoolExecutor, wait
 from concurrent.futures.process import BrokenProcessPool
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
 from .config import Settings
-from .errors import WorkerCrashed
+from .errors import Cancelled, WorkerCrashed
 
 log = logging.getLogger(__name__)
 
@@ -81,6 +81,9 @@ def _init_worker(ocr_threads_per_worker: int, home: str) -> None:
     os.environ["DOC_ANONYMIZER_OCR_THREADS"] = str(ocr_threads_per_worker)
     os.environ["DOC_ANONYMIZER_HOME"] = home
     os.environ.setdefault("OMP_THREAD_LIMIT", "1")
+    from .config import quiet_subprocesses
+
+    quiet_subprocesses()
     # Started from pythonw.exe (installed program): there is no console, so
     # stdout/stderr are None – libraries writing to them must not crash.
     if sys.stdout is None:
@@ -111,9 +114,49 @@ def make_pool(documents: int, workers: int | None = None) -> ProcessPoolExecutor
                                initargs=(threads, str(home_dir())))
 
 
+def kill_workers(pool: ProcessPoolExecutor | None = None) -> None:
+    """End worker processes at once (cancel, program end).
+
+    Without this they would finish their current document after the program
+    itself has ended.
+    """
+    if pool is None:
+        processes = multiprocessing.active_children()  # every pool of this program
+    else:
+        processes = list((getattr(pool, "_processes", None) or {}).values())
+    for process in processes:
+        try:
+            process.kill()
+        except Exception:  # noqa: BLE001 - already gone
+            pass
+
+
+def _collect(pool: ProcessPoolExecutor, futures: dict[Future, int],
+             on_done: Callable[[int, Future], None],
+             cancelled: Callable[[], bool] | None) -> None:
+    """Hand every finished future to ``on_done``; stop at once when cancelled."""
+    remaining = set(futures)
+    try:
+        while remaining:
+            done, remaining = wait(remaining, timeout=0.5, return_when=FIRST_COMPLETED)
+            if cancelled is not None and cancelled():
+                raise Cancelled()
+            for future in done:
+                on_done(futures[future], future)
+    except BaseException:
+        # Cancelled or an error in a callback: do not wait for documents
+        # that are still being processed.
+        kill_workers(pool)
+        pool.shutdown(wait=False, cancel_futures=True)
+        raise
+    pool.shutdown(wait=True)
+
+
 def run_in_pool(jobs: list[tuple[int, Callable, tuple]],
                 on_result: Callable[[int, object], None],
-                on_error: Callable[[int, BaseException], None]) -> bool:
+                on_error: Callable[[int, BaseException], None],
+                cancelled: Callable[[], bool] | None = None,
+                isolate: bool = False) -> bool:
     """Run ``jobs`` (index, function, arguments) in worker processes.
 
     A document must never take the whole batch down:
@@ -124,41 +167,51 @@ def run_in_pool(jobs: list[tuple[int, Callable, tuple]],
       not finished are then repeated one by one, each in a fresh process, so
       only the document that really causes the crash fails.
 
-    Returns ``False`` if no pool could be used (caller processes in-process).
+    ``cancelled`` is asked regularly; if it answers ``True`` the workers are
+    ended and :class:`Cancelled` is raised. ``isolate`` uses a worker process
+    even where it does not pay off (single document) – for cases whose last
+    attempt ended the whole program.
+
+    Returns ``False`` if no pool is used (the caller processes in-process).
     """
     pool = make_pool(len(jobs))
+    if pool is None and isolate:
+        pool = make_pool(1, workers=1)
     if pool is None:
         return False
     pending = {index: (fn, args) for index, fn, args in jobs}
-    broken = False
-    with pool:
-        futures = {pool.submit(fn, *args): index for index, (fn, args) in pending.items()}
-        for future in as_completed(futures):
-            index = futures[future]
-            try:
-                result = future.result()
-            except BrokenProcessPool:
-                broken = True  # every unfinished future fails the same way
-                continue
-            except Exception as exc:  # noqa: BLE001 - reported per document
-                pending.pop(index)
-                on_error(index, exc)
-                continue
+    broken = []
+
+    def on_done(index: int, future: Future) -> None:
+        try:
+            result = future.result()
+        except BrokenProcessPool:
+            broken.append(index)  # every unfinished future fails the same way
+            return
+        except Exception as exc:  # noqa: BLE001 - reported per document
             pending.pop(index)
-            on_result(index, result)
+            on_error(index, exc)
+            return
+        pending.pop(index)
+        on_result(index, result)
+
+    _collect(pool, {pool.submit(fn, *args): index for index, (fn, args) in pending.items()},
+             on_done, cancelled)
     if broken:
         log.warning("worker process died – repeating %d document(s) one by one", len(pending))
         for index, (fn, args) in sorted(pending.items()):
+            def on_single(i: int, future: Future) -> None:
+                try:
+                    result = future.result()
+                except BrokenProcessPool:
+                    on_error(i, WorkerCrashed())
+                except Exception as exc:  # noqa: BLE001
+                    on_error(i, exc)
+                else:
+                    on_result(i, result)
+
             single = make_pool(1, workers=1)
-            try:
-                with single:
-                    result = single.submit(fn, *args).result()
-            except BrokenProcessPool:
-                on_error(index, WorkerCrashed())
-            except Exception as exc:  # noqa: BLE001
-                on_error(index, exc)
-            else:
-                on_result(index, result)
+            _collect(single, {single.submit(fn, *args): index}, on_single, cancelled)
     return True
 
 

@@ -7,7 +7,10 @@ The browser is used purely as a display. Protection, in layers:
 * **Access token:** every request needs a random secret that only the
   program started by this Windows user knows (cookie set when the program
   opens its window). Other accounts on a shared computer (terminal server)
-  and other programs cannot read or change anything.
+  and other programs cannot read or change anything. The secret itself is
+  never part of an address: the window is opened with a *ticket* that is
+  valid once and for a short time (addresses end up in the browser history
+  and in the list of running programs).
 * Requests must come from the program's own page: the ``Host`` header is
   checked (DNS rebinding), cross-site requests are rejected by the browser's
   ``Sec-Fetch-Site``/``Origin`` headers, mutating requests need a custom
@@ -17,16 +20,19 @@ The browser is used purely as a display. Protection, in layers:
 
 from __future__ import annotations
 
+import getpass
 import hashlib
 import hmac
 import io
 import logging
 import os
+import secrets
 import subprocess
 import sys
 import tempfile
 import threading
 import time
+import traceback
 import zipfile
 from pathlib import Path
 
@@ -118,8 +124,35 @@ def create_app(store: CaseStore | None = None, start_worker: bool = True,
     registries = RegistryCache(store)
     #: last sign of life of a browser page (time.monotonic()); "closed": the
     #: last page said goodbye at that time (window closed).
-    life = {"last_seen": None, "connected": False, "closed": None}
-    app.extensions["anonymizer"] = {"store": store, "worker": worker, "life": life}
+    #: "page": a browser page that was let in with a ticket has reported
+    #: (in contrast to a program using the token directly).
+    life = {"last_seen": None, "connected": False, "closed": None, "page": False}
+    #: One-time tickets that open the page: code -> end of validity
+    #: (time.monotonic(); None = until used).
+    tickets: dict[str, float | None] = {}
+    tickets_lock = threading.Lock()
+
+    def new_ticket(ttl: float | None = 120.0) -> str:
+        """A code that lets a browser in exactly once (see module docstring)."""
+        code = secrets.token_urlsafe(24)
+        with tickets_lock:
+            now = time.monotonic()
+            for old, until in list(tickets.items()):
+                if until is not None and until < now:
+                    del tickets[old]
+            tickets[code] = None if ttl is None else now + ttl
+        return code
+
+    def redeem(code: str) -> bool:
+        with tickets_lock:
+            for known in list(tickets):
+                if hmac.compare_digest(known.encode(), code.encode("utf-8", "replace")):
+                    until = tickets.pop(known)
+                    return until is None or until >= time.monotonic()
+        return False
+
+    app.extensions["anonymizer"] = {"store": store, "worker": worker, "life": life,
+                                    "new_ticket": new_ticket}
 
     if start_worker:
         # Load the language model in the background: the first analysis then
@@ -156,15 +189,15 @@ def create_app(store: CaseStore | None = None, start_worker: bool = True,
                 request.headers.get(CSRF_HEADER) != "1":
             abort(403)
         if token is not None:
-            if path == "/" and request.args.get("token"):
-                # The program opens its window with the token in the address;
-                # it is moved into a cookie and removed from the address.
-                supplied = request.args["token"]
-                if not hmac.compare_digest(supplied.encode("utf-8", "replace"), token.encode()):
-                    return _locked()
+            if path == "/" and request.args.get("ticket"):
+                # The program opens its window with a one-time ticket; it is
+                # exchanged for the cookie and removed from the address.
                 resp = redirect("/", code=303)
-                resp.set_cookie(_cookie_name(), token, httponly=True, samesite="Strict",
-                                path="/")
+                if redeem(request.args["ticket"]):
+                    resp.set_cookie(_cookie_name(), token, httponly=True, samesite="Strict",
+                                    path="/")
+                elif not _authorised():  # (a repeated request of the same window is fine)
+                    return _locked()
                 return resp
             public = path in ("/api/ping", "/favicon.ico") or path.startswith("/static/")
             if not public and not _authorised():
@@ -179,6 +212,8 @@ def create_app(store: CaseStore | None = None, start_worker: bool = True,
             life["last_seen"] = time.monotonic()
             life["connected"] = True
             life["closed"] = None
+            if token is not None and request.cookies.get(_cookie_name()):
+                life["page"] = True
         return None
 
     def _locked():
@@ -209,7 +244,9 @@ def create_app(store: CaseStore | None = None, start_worker: bool = True,
         if isinstance(exc, UserError):
             return jsonify(error=str(exc)), 400
         if isinstance(exc, (ValueError, TypeError)):
-            log.info("bad request: %s", exc.__class__.__name__)
+            # Where it happened, but not the message (may quote what was typed).
+            log.warning("bad request (%s):\n%s", exc.__class__.__name__,
+                        "".join(traceback.format_tb(exc.__traceback__)))
             return jsonify(error="Ungültige Anfrage."), 400
         log.exception("request failed")
         return jsonify(error=friendly_message(exc)), 500
@@ -221,6 +258,19 @@ def create_app(store: CaseStore | None = None, start_worker: bool = True,
     def _json() -> dict:
         payload = request.get_json(force=True, silent=True)
         return payload if isinstance(payload, dict) else {}
+
+    def _editable(case_id: str) -> CaseRegistry:
+        """The register of a case for a change by the user.
+
+        Not while the case is being processed: the change would come too
+        late for the running job and be overwritten when it ends. Callers
+        hold ``registries.lock`` from here until the change is saved, so a
+        job never starts in the middle of a change.
+        """
+        if store.load(case_id).status in ("analyse", "schwaerzen"):
+            abort(409, "Die Akte wird gerade verarbeitet – Änderungen sind erst danach "
+                       "wieder möglich.")
+        return registries.get(case_id)
 
     def _document(path: str | Path, **kwargs):
         """Send a generated file (report, PDF …) with the strict document CSP."""
@@ -258,6 +308,13 @@ def create_app(store: CaseStore | None = None, start_worker: bool = True,
             data["proof"] = ping_proof(token, challenge)
         return jsonify(data)
 
+    @app.post("/api/ticket")
+    def ticket():
+        """A one-time ticket for a further window (asked for by the launcher)."""
+        if token is None:
+            abort(404)
+        return jsonify(ticket=new_ticket())
+
     @app.post("/api/heartbeat")
     def heartbeat():
         busy = bool(worker and worker.busy)
@@ -289,7 +346,8 @@ def create_app(store: CaseStore | None = None, start_worker: bool = True,
                        tesseract_languages=ocr.available_languages(),
                        gliner=ner.gliner_installed(), platform=sys.platform, managed=managed,
                        output_dir=settings.output_dir, keep_days=settings.keep_days,
-                       cloud=is_cloud_synced(settings.output_dir))
+                       cloud=is_cloud_synced(settings.output_dir), user=_user_name(),
+                       page_connected=life["page"])
 
     @app.get("/api/settings")
     def get_settings():
@@ -395,9 +453,18 @@ def create_app(store: CaseStore | None = None, start_worker: bool = True,
     def delete_case(case_id: str):
         case = store.load(case_id)
         if case.status in ("analyse", "schwaerzen"):
-            abort(409, "Die Akte wird gerade bearbeitet.")
-        store.delete(case_id)
-        registries.forget()
+            abort(409, "Die Akte wird gerade bearbeitet. Bitte zuerst abbrechen.")
+        with registries.lock:
+            store.delete(case_id)
+            registries.forget()
+        return jsonify(ok=True)
+
+    @app.post("/api/cases/<case_id>/cancel")
+    def cancel(case_id: str):
+        """Stop the running analysis/anonymisation of a case."""
+        case = store.load(case_id)
+        if case.status in ("analyse", "schwaerzen") and worker is not None:
+            worker.cancel(case_id)
         return jsonify(ok=True)
 
     @app.post("/api/cases/<case_id>/documents")
@@ -425,10 +492,11 @@ def create_app(store: CaseStore | None = None, start_worker: bool = True,
             abort(400, "Bitte zuerst PDF-Dateien hinzufügen.")
         if case.status in ("analyse", "schwaerzen"):
             abort(409, "Die Akte wird gerade bearbeitet.")
-        case.status = "analyse"
-        case.error = ""
-        case.progress = {"done": 0, "total": 1, "step": "Wartet …"}
-        store.save(case)
+        with registries.lock:
+            case.status = "analyse"
+            case.error = ""
+            case.progress = {"done": 0, "total": 1, "step": "Wartet …"}
+            store.save(case)
         _submit(case_id, "analyse")
         return jsonify(ok=True)
 
@@ -438,10 +506,13 @@ def create_app(store: CaseStore | None = None, start_worker: bool = True,
         if case.status not in ("pruefung", "fertig", "fehler") or \
                 not (store.folder(case_id) / "register.json").exists():
             abort(409, "Die Akte ist noch nicht bereit.")
-        case.status = "schwaerzen"
-        case.error = ""
-        case.progress = {"done": 0, "total": 1, "step": "Wartet …"}
-        store.save(case)
+        # From here on the review is closed (see _editable): what the user
+        # sees when clicking is exactly what gets anonymised.
+        with registries.lock:
+            case.status = "schwaerzen"
+            case.error = ""
+            case.progress = {"done": 0, "total": 1, "step": "Wartet …"}
+            store.save(case)
         _submit(case_id, "redact")
         return jsonify(ok=True)
 
@@ -485,23 +556,25 @@ def create_app(store: CaseStore | None = None, start_worker: bool = True,
     @app.patch("/api/cases/<case_id>/entities/<entity_id>")
     def update_entity(case_id: str, entity_id: str):
         payload = _json()
-        registry = registries.get(case_id)
-        entity = registry.entities[entity_id]
-        if "enabled" in payload:
-            changed = entity.enabled != bool(payload["enabled"])
-            entity.enabled = bool(payload["enabled"])
-            if changed or payload.get("decided"):
-                _learn(registry, entity, "unsicher" if entity.uncertain else "korrektur")
-        if payload.get("decided"):
-            entity.decided = True
-        if "replacement" in payload and str(payload["replacement"]).strip():
-            entity.replacement = _label(payload["replacement"], 80)
-            entity.forms["edited"] = "1"
-            if entity.category is Category.PERSON:
-                # Short forms ("Herr M.") follow the edited full label.
-                short = _label(payload.get("short") or entity.replacement, 80)
-                entity.forms.update(surname=short, given=short, inverted=entity.replacement)
-        registries.save(case_id, registry)
+        with registries.lock:
+            registry = _editable(case_id)
+            entity = registry.entities[entity_id]
+            if "enabled" in payload:
+                changed = entity.enabled != bool(payload["enabled"])
+                entity.enabled = bool(payload["enabled"])
+                if changed or payload.get("decided"):
+                    _learn(registry, entity, "unsicher" if entity.uncertain else "korrektur")
+            if payload.get("decided"):
+                entity.decided = True
+            if "replacement" in payload and str(payload["replacement"]).strip():
+                entity.replacement = _label(payload["replacement"], 80)
+                entity.forms["edited"] = "1"
+                if entity.category is Category.PERSON:
+                    # Short forms ("Herr M.") follow the edited full label.
+                    short = _label(payload.get("short") or entity.replacement, 80)
+                    entity.forms.update(surname=short, given=short,
+                                        inverted=entity.replacement)
+            registries.save(case_id, registry)
         return jsonify(ok=True)
 
     @app.post("/api/cases/<case_id>/entities")
@@ -514,31 +587,33 @@ def create_app(store: CaseStore | None = None, start_worker: bool = True,
             abort(400, "Unbekannte Kategorie")
         if len(text) < 2:
             abort(400, "Bitte mindestens zwei Zeichen eingeben.")
-        registry = registries.get(case_id)
-        entity = registry.add_term(text, category)
-        if entity is not None:
-            _learn(registry, entity, "hinzugefuegt")
-        if payload.get("always"):
-            settings = Settings.load()
-            if not any(t.get("text") == text for t in settings.deny_terms):
-                settings.deny_terms.append({"text": text, "category": category.value})
-                settings.save()
-        registries.save(case_id, registry)
+        with registries.lock:
+            registry = _editable(case_id)
+            entity = registry.add_term(text, category)
+            if entity is not None:
+                _learn(registry, entity, "hinzugefuegt")
+            if payload.get("always"):
+                settings = Settings.load()
+                if not any(t.get("text") == text for t in settings.deny_terms):
+                    settings.deny_terms.append({"text": text, "category": category.value})
+                    settings.save()
+            registries.save(case_id, registry)
         return jsonify(id=entity.id if entity else None,
                        count=entity.count if entity else 0)
 
     @app.post("/api/cases/<case_id>/entities/<entity_id>/never")
     def never_redact(case_id: str, entity_id: str):
-        registry = registries.get(case_id)
-        entity = registry.entities[entity_id]
-        entity.enabled = False
-        entity.decided = True
-        _learn(registry, entity, "liste")
-        settings = Settings.load()
-        if entity.original not in settings.allow_terms:
-            settings.allow_terms.append(entity.original)
-            settings.save()
-        registries.save(case_id, registry)
+        with registries.lock:
+            registry = _editable(case_id)
+            entity = registry.entities[entity_id]
+            entity.enabled = False
+            entity.decided = True
+            _learn(registry, entity, "liste")
+            settings = Settings.load()
+            if entity.original not in settings.allow_terms:
+                settings.allow_terms.append(entity.original)
+                settings.save()
+            registries.save(case_id, registry)
         return jsonify(ok=True)
 
     @app.get("/api/cases/<case_id>/attention")
@@ -561,11 +636,12 @@ def create_app(store: CaseStore | None = None, start_worker: bool = True,
     @app.post("/api/cases/<case_id>/pages/reviewed")
     def page_reviewed(case_id: str):
         payload = _json()
-        registry = registries.get(case_id)
         key = f"{int(payload['doc'])}:{int(payload['page'])}"
-        if key not in registry.reviewed_pages:
-            registry.reviewed_pages.append(key)
-        registries.save(case_id, registry)
+        with registries.lock:
+            registry = _editable(case_id)
+            if key not in registry.reviewed_pages:
+                registry.reviewed_pages.append(key)
+            registries.save(case_id, registry)
         return jsonify(ok=True)
 
     @app.post("/api/cases/<case_id>/suspects")
@@ -580,11 +656,12 @@ def create_app(store: CaseStore | None = None, start_worker: bool = True,
         if not text:
             abort(400, "Kein Text angegeben.")
         if payload.get("redact"):
-            registry = registries.get(case_id)
-            entity = registry.add_term(text, category)
-            if entity is not None:
-                _learn(registry, entity, "nachkontrolle")
-            registries.save(case_id, registry)
+            with registries.lock:
+                registry = _editable(case_id)
+                entity = registry.add_term(text, category)
+                if entity is not None:
+                    _learn(registry, entity, "nachkontrolle")
+                registries.save(case_id, registry)
         elif Settings.load().use_learning:
             learning.record(learning.Decision(text, category.value, "behalten", "nachkontrolle"))
         return jsonify(ok=True)
@@ -611,7 +688,14 @@ def create_app(store: CaseStore | None = None, start_worker: bool = True,
 
     @app.post("/api/learning/clear")
     def learning_clear():
+        """Forget everything learned: the decisions *and* what was derived
+        from them (trained language model, signature model)."""
+        from .train import reset
+
+        if worker is not None and worker.training.get("running"):
+            abort(409, "Das Programm lernt gerade – bitte danach noch einmal versuchen.")
         learning.clear()
+        reset()
         return jsonify(ok=True)
 
     # ---------------------------------------------------------------- pages
@@ -694,36 +778,38 @@ def create_app(store: CaseStore | None = None, start_worker: bool = True,
     @app.post("/api/cases/<case_id>/manual")
     def add_manual(case_id: str):
         payload = _json()
-        registry = registries.get(case_id)
         doc, page = int(payload["doc"]), int(payload["page"])
-        if not 0 <= doc < len(registry.docs) or not 0 <= page < len(registry.docs[doc]):
-            abort(404)
         rect = [float(v) for v in payload["rect"]]
         if len(rect) != 4:
             abort(400, "Ungültiger Bereich.")
-        with pymupdf.open(_doc_path(case_id, doc)) as pdf:
-            pg = pdf[page]
-            derot = pg.derotation_matrix
-            r = pymupdf.Rect(*rect) & pymupdf.Rect(0, 0, pg.rect.width, pg.rect.height)
-        r = r * derot
-        r.normalize()
-        if r.is_empty or r.width < 2 or r.height < 2:
-            abort(400, "Der Bereich ist zu klein.")
         label = _label(payload.get("label") or "[geschwärzt]", 40)
-        registry.manual_boxes.append(ManualBox(doc, page, r.x0, r.y0, r.x1, r.y1, label))
-        registries.save(case_id, registry)
+        with registries.lock:
+            registry = _editable(case_id)
+            if not 0 <= doc < len(registry.docs) or not 0 <= page < len(registry.docs[doc]):
+                abort(404)
+            with pymupdf.open(_doc_path(case_id, doc)) as pdf:
+                pg = pdf[page]
+                derot = pg.derotation_matrix
+                r = pymupdf.Rect(*rect) & pymupdf.Rect(0, 0, pg.rect.width, pg.rect.height)
+            r = r * derot
+            r.normalize()
+            if r.is_empty or r.width < 2 or r.height < 2:
+                abort(400, "Der Bereich ist zu klein.")
+            registry.manual_boxes.append(ManualBox(doc, page, r.x0, r.y0, r.x1, r.y1, label))
+            registries.save(case_id, registry)
         return jsonify(ok=True)
 
     @app.delete("/api/cases/<case_id>/manual/<int:index>")
     def delete_manual(case_id: str, index: int):
-        registry = registries.get(case_id)
-        if not 0 <= index < len(registry.manual_boxes):
-            abort(404)
-        box = registry.manual_boxes.pop(index)
-        if box.features and Settings.load().use_learning:
-            # "Not a signature": a negative example for the signature model.
-            learning.record_signatures([(box.features, 0)])
-        registries.save(case_id, registry)
+        with registries.lock:
+            registry = _editable(case_id)
+            if not 0 <= index < len(registry.manual_boxes):
+                abort(404)
+            box = registry.manual_boxes.pop(index)
+            if box.features and Settings.load().use_learning:
+                # "Not a signature": a negative example for the signature model.
+                learning.record_signatures([(box.features, 0)])
+            registries.save(case_id, registry)
         return jsonify(ok=True)
 
     # --------------------------------------------------------------- results
@@ -772,17 +858,18 @@ def create_app(store: CaseStore | None = None, start_worker: bool = True,
     @app.post("/api/cases/<case_id>/accept-all")
     def accept_all(case_id: str):
         """Take over all open proposals as shown (and mark scan pages as viewed)."""
-        registry = registries.get(case_id)
-        for entity in registry.entities.values():
-            if entity.uncertain and not entity.decided:
-                entity.decided = True  # not recorded as learning signal (not looked at)
-        if _json().get("pages"):
-            for d, doc_pages in enumerate(registry.docs):
-                for page in doc_pages:
-                    key = f"{d}:{page.index}"
-                    if page.poorly_readable and key not in registry.reviewed_pages:
-                        registry.reviewed_pages.append(key)
-        registries.save(case_id, registry)
+        with registries.lock:
+            registry = _editable(case_id)
+            for entity in registry.entities.values():
+                if entity.uncertain and not entity.decided:
+                    entity.decided = True  # not recorded as learning signal (not looked at)
+            if _json().get("pages"):
+                for d, doc_pages in enumerate(registry.docs):
+                    for page in doc_pages:
+                        key = f"{d}:{page.index}"
+                        if page.poorly_readable and key not in registry.reviewed_pages:
+                            registry.reviewed_pages.append(key)
+            registries.save(case_id, registry)
         return jsonify(ok=True)
 
     @app.get("/api/cases/<case_id>/mapping")
@@ -796,7 +883,7 @@ def create_app(store: CaseStore | None = None, start_worker: bool = True,
     def open_folder(case_id: str):
         case = store.load(case_id)
         folder = case.output_dir
-        if not folder or not Path(folder).exists():
+        if not folder or not Path(folder).is_dir():
             abort(404, "Der Ordner ist nicht mehr vorhanden.")
         _open_in_file_manager(Path(folder))
         return jsonify(ok=True, folder=folder)
@@ -830,17 +917,32 @@ def _learn(registry: CaseRegistry, entity, origin: str) -> None:
         sources=list(entity.sources), contexts=registry.contexts(entity)))
 
 
+def _user_name() -> str:
+    """Windows account the program runs for (shown in the interface, so
+    nobody works in a colleague's program by mistake on a shared computer)."""
+    try:
+        return getpass.getuser()
+    except Exception:  # noqa: BLE001 - not important enough to fail
+        return ""
+
+
 def _case_summary(case) -> dict:
     processed = [d for d in case.documents if not d.error]
     failed_docs = sum(1 for d in case.documents if d.error)
     not_passed = sum(1 for d in processed if not (d.verification or {}).get("passed"))
+    # Verification stages that could not be carried out (not the same as passed).
+    unchecked = sum(1 for d in processed if (d.verification or {}).get("passed")
+                    and d.verification.get("complete") is False)
+    done = case.status == "fertig"
     return {"id": case.id, "title": case.title, "created": case.created,
             "status": case.status, "documents": len(case.documents),
             "pages": sum(d.pages for d in case.documents), "progress": case.progress,
             "error": case.error, "unreadable": failed_docs,
-            "not_passed": not_passed if case.status == "fertig" else None,
-            "passed": (not_passed == 0 and bool(processed))
-            if case.status == "fertig" else None}
+            "not_passed": not_passed if done else None,
+            "unchecked": unchecked if done else None,
+            "has_folder": bool(case.output_dir) and Path(case.output_dir).is_dir(),
+            "reviewable": case.status == "fehler" and any(d.pages for d in case.documents),
+            "passed": (not_passed == 0 and bool(processed)) if done else None}
 
 
 def _usable_folder(text: str) -> Path:
@@ -901,13 +1003,8 @@ def _folder_listing(text: str) -> dict:
                         ("Downloads", "Downloads")):
         if (home / name).is_dir():
             shortcuts.append({"label": label, "path": str(home / name)})
-    if sys.platform.startswith("win"):
-        import string
-
-        for letter in string.ascii_uppercase:
-            drive = f"{letter}:\\"
-            if os.path.exists(drive):
-                shortcuts.append({"label": f"Laufwerk {letter}:", "path": drive})
+    for drive in _drives():
+        shortcuts.append({"label": f"Laufwerk {drive[:2]}", "path": drive})
     try:
         writable = os.access(path, os.W_OK)
     except OSError:
@@ -918,10 +1015,37 @@ def _folder_listing(text: str) -> dict:
             "cloud": is_cloud_synced(path), "shortcuts": shortcuts}
 
 
+def _drives() -> list[str]:
+    """Drive letters of this computer ("C:\\", …; empty on other systems).
+
+    Asked from Windows in one call – probing every letter would block for
+    seconds on disconnected network drives.
+    """
+    if not sys.platform.startswith("win"):
+        return []
+    try:
+        import ctypes
+
+        mask = ctypes.windll.kernel32.GetLogicalDrives()
+    except Exception:  # noqa: BLE001
+        return ["C:\\"]
+    return [f"{chr(65 + i)}:\\" for i in range(26) if mask >> i & 1]
+
+
+#: Results the program writes – only these are opened with their default program.
+_OPENABLE = {".pdf", ".txt", ".html"}
+
+
 def _open_in_file_manager(path: Path) -> None:
     """Open a folder/file with Explorer or the default program (local desktop)."""
+    if not path.is_dir() and path.suffix.lower() not in _OPENABLE:
+        raise UserError("Dieser Dateityp wird nicht geöffnet.")
     try:
-        if sys.platform.startswith("win"):
+        if sys.platform.startswith("win") and path.is_dir():
+            # Explorer itself – never "run" something that only looks like a folder.
+            explorer = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "explorer.exe"
+            subprocess.Popen([str(explorer), str(path)])  # noqa: S603
+        elif sys.platform.startswith("win"):
             os.startfile(path)  # type: ignore[attr-defined]  # noqa: S606
         elif sys.platform == "darwin":
             subprocess.Popen(["open", str(path)])  # noqa: S603, S607

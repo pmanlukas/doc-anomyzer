@@ -7,9 +7,13 @@ Runs with ``pythonw.exe`` – without a console window:
 * Otherwise the local server starts on a free port and the window opens:
   a window of its own (Microsoft Edge in "app" mode, without address bar
   and tabs) or, if Edge is not available, a tab of the default browser.
-* Access is protected by a random token created at every start. It is
-  handed to the window in its address and stored for a second start in
-  ``server.json`` inside the user's private application folder.
+* Access is protected by a random token created at every start, stored
+  for a second start in ``server.json`` inside the user's private
+  application folder. The window is opened with a one-time ticket – the
+  token itself never appears in an address or a command line.
+* The Edge window uses a profile of its own inside the application folder:
+  no browser extensions, no synchronisation, and a cookie store that no
+  other web page ever sees.
 * The server ends itself shortly after the window has been closed, or when
   no page has given a sign of life for a while – never while a job is
   running. Nothing has to be kept open and nothing has to be closed.
@@ -148,12 +152,36 @@ def write_state(port: int, token: str, version: str) -> None:
     """Store port and token – readable by this user only."""
     path = state_file()
     data = json.dumps({"port": port, "pid": os.getpid(), "version": version, "token": token})
-    path.unlink(missing_ok=True)
     # 0600 where the system supports it; on Windows the profile folder's
-    # access rights already exclude other users.
-    handle = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    # access rights already exclude other users. Written next to the file
+    # and moved into place: a second start reading at this moment sees the
+    # old or the new state, never half of it.
+    tmp = path.with_name(f"server.{os.getpid()}.tmp")
+    tmp.unlink(missing_ok=True)
+    handle = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(handle, "w", encoding="utf-8") as fh:
         fh.write(data)
+    for attempt in range(40):
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:  # Windows: somebody is reading the file right now
+            if attempt == 39:
+                raise
+            time.sleep(0.05)
+
+
+def request_ticket(base_url: str, token: str) -> str | None:
+    """Ask the running program for a one-time ticket for a further window."""
+    request = urllib.request.Request(
+        base_url + "api/ticket", data=b"{}", method="POST",
+        headers={"X-Anonymizer": "1", "X-Anonymizer-Token": token,
+                 "Content-Type": "application/json"})
+    try:
+        with _LOCAL.open(request, timeout=5) as resp:
+            return str(json.loads(resp.read().decode("utf-8"))["ticket"])
+    except (OSError, ValueError, KeyError, urllib.error.URLError):
+        return None
 
 
 def running() -> tuple[str, str] | None:
@@ -191,13 +219,15 @@ def _listen_socket() -> tuple[socket.socket, int]:
     On Windows a second program could otherwise bind the same port
     (``SO_REUSEADDR`` semantics) and intercept requests.
     """
-    for port in PORTS:
+    # The usual ports first; if all are taken (many users on one terminal
+    # server), any free port the system offers.
+    for port in [*PORTS, 0]:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         try:
             if sys.platform.startswith("win"):
                 sock.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
             sock.bind(("127.0.0.1", port))
-            return sock, port
+            return sock, sock.getsockname()[1]
         except OSError:
             sock.close()
     raise PortError()
@@ -255,10 +285,18 @@ def _find_edge() -> str | None:
     return next((str(path) for path in candidates if path.is_file()), None)
 
 
-def open_window(base_url: str, token: str) -> None:
-    """Show the program: own window if possible, otherwise a browser tab."""
-    url = f"{base_url}?token={token}"
-    log.info("Fenster öffnen: %s", base_url)  # never log the token
+def window_profile() -> Path:
+    """Browser profile used only by the program window."""
+    return _home() / "fenster"
+
+
+def open_window(base_url: str, ticket: str) -> None:
+    """Show the program: own window if possible, otherwise a browser tab.
+
+    ``ticket``: one-time code that lets the window in (see :mod:`.web`).
+    """
+    url = f"{base_url}?ticket={ticket}"
+    log.info("Fenster öffnen: %s", base_url)  # never log the ticket
     app_window = True
     try:
         from .config import Settings
@@ -269,8 +307,16 @@ def open_window(base_url: str, token: str) -> None:
     edge = _find_edge() if app_window else None
     if edge:
         try:
-            subprocess.Popen([edge, f"--app={url}", "--no-first-run",  # noqa: S603
-                              "--window-size=1500,950"],
+            # A profile of its own: the access cookie lives in a store no
+            # other page of the user's browser can reach, and neither
+            # extensions (translators, "AI assistants" …) nor the
+            # synchronisation of the everyday profile see the documents.
+            subprocess.Popen([edge, f"--app={url}",  # noqa: S603
+                              f"--user-data-dir={window_profile()}",
+                              "--no-first-run", "--no-default-browser-check",
+                              "--disable-extensions", "--disable-sync",
+                              "--disable-features=Translate",
+                              "--disk-cache-size=1048576", "--window-size=1500,950"],
                              stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                              stderr=subprocess.DEVNULL, close_fds=True)
             return
@@ -302,11 +348,16 @@ def serve(open_page: bool = True) -> None:
     from waitress import create_server
 
     from . import __version__
+    from .config import private_temp_dir
+    from .parallel import kill_workers
     from .web import create_app
 
     sock, port = _listen_socket()
     token = secrets.token_urlsafe(32)
     stop_event = threading.Event()
+    # Page images for the text recognition and uploads in transit: in the
+    # private folder, emptied at every start and end.
+    private_temp_dir(clean=True)
     app = create_app(managed=True, on_shutdown=stop_event.set, token=token)
     worker = app.extensions["anonymizer"]["worker"]
     server = create_server(app, sockets=[sock], threads=8,
@@ -340,16 +391,31 @@ def serve(open_page: bool = True) -> None:
             state_file().unlink(missing_ok=True)
         except OSError:
             pass
+        # Worker processes must not go on after the program has ended.
+        kill_workers()
+        try:
+            private_temp_dir(clean=True)
+        except OSError:
+            pass
         log.info("Programm beendet.")
         logging.shutdown()
         # Ends the process including waitress' threads; open requests have
         # been answered (the shutdown request waits 0.5 s before signalling).
         os._exit(0)
 
+    def first_window() -> None:
+        if _wait_for(lambda: running_url() == url, 60):
+            open_window(url, app.extensions["anonymizer"]["new_ticket"]())
+        else:
+            log.error("Der eigene Server antwortet nicht – kein Fenster geöffnet.")
+            show_message("Das Programm ist gestartet, antwortet aber nicht.\n\n"
+                         "Bitte den Computer neu starten und es noch einmal versuchen."
+                         f"\n\nTechnische Details stehen in:\n{log_file()}")
+            stop_event.set()
+
     threading.Thread(target=watchdog, name="watchdog", daemon=True).start()
     if open_page:
-        threading.Thread(target=lambda: _wait_for(lambda: running_url() == url, 30)
-                         and open_window(url, token), name="window", daemon=True).start()
+        threading.Thread(target=first_window, name="window", daemon=True).start()
     server.run()
 
 
@@ -387,11 +453,29 @@ def _friendly(exc: BaseException) -> str:
             + log_hint)
 
 
+def _open_further_window(found: tuple[str, str]) -> None:
+    """The program runs already: show it (again) in a window."""
+    url, token = found
+    ticket = request_ticket(url, token)
+    if ticket is None:
+        show_message("Das Programm läuft bereits, das Fenster konnte aber nicht geöffnet "
+                     "werden.\n\nBitte einen Moment warten und noch einmal auf das "
+                     "Symbol klicken.")
+        return
+    open_window(url, ticket)
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     try:
         setup_logging()
     except Exception:  # noqa: BLE001 - logging must never block the start
+        pass
+    try:
+        from .config import quiet_subprocesses
+
+        quiet_subprocesses()
+    except Exception:  # noqa: BLE001 - cosmetic only
         pass
     try:
         if "--beenden" in argv:
@@ -402,7 +486,7 @@ def main(argv: list[str] | None = None) -> int:
         if found:
             log.info("Läuft bereits – nur das Fenster öffnen.")
             if open_page:
-                open_window(*found)
+                _open_further_window(found)
             return 0
         lock = _InstanceLock()
         if not lock.acquire():
@@ -411,7 +495,7 @@ def main(argv: list[str] | None = None) -> int:
             if _wait_for(lambda: running() is not None, 90):
                 found = running()
                 if open_page and found:
-                    open_window(*found)
+                    _open_further_window(found)
                 return 0
             show_message("Das Programm startet bereits. Bitte einen Moment warten und dann "
                          "noch einmal auf das Symbol klicken.", error=False)

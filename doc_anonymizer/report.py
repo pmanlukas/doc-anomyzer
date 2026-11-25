@@ -30,6 +30,7 @@ h1{font-size:1.6em;margin-bottom:.2em}h2{font-size:1.2em;margin-top:1.8em;border
 table{border-collapse:collapse;width:100%;margin:.5em 0}td,th{border:1px solid #d5d9e0;
 padding:.35em .6em;text-align:left;vertical-align:top}th{background:#f3f5f8}
 .ok{color:#0b7a32;font-weight:600}.bad{color:#b3261e;font-weight:600}
+.skip{color:#9a5b00;font-weight:600}
 .banner{padding:1em 1.2em;border-radius:8px;font-size:1.15em;margin:1em 0}
 .banner.ok{background:#e6f4ea;border:1px solid #9ad3ae}.banner.bad{background:#fdecea;border:1px solid #f1aaa4}
 .warn{background:#fff7e0;border:1px solid #f0d58c;padding:.8em 1em;border-radius:8px}
@@ -73,10 +74,15 @@ def verification_report(case: "Case", doc: "DocumentInfo", verification: "Verifi
     if manual:
         counts[Category.MANUAL.label_de] += manual
 
+    def mark(check) -> str:
+        if check.skipped:  # neither passed nor failed
+            return "<td class='skip' title='nicht ausgeführt'>–</td>"
+        return f"<td class='{'ok' if check.ok else 'bad'}'>{'✔' if check.ok else '✘'}</td>"
+
     rows_checks = "".join(
-        f"<tr><td class='{'ok' if c.ok else 'bad'}'>{'✔' if c.ok else '✘'}</td>"
-        f"<td>{_e(c.name)}</td><td class='muted'>{_e(c.detail)}</td></tr>"
+        f"<tr>{mark(c)}<td>{_e(c.name)}</td><td class='muted'>{_e(c.detail)}</td></tr>"
         for c in verification.checks)
+    skipped = [c.name for c in verification.checks if c.skipped]
     rows_counts = "".join(
         f"<tr><td>{_e(cat)}</td><td>{n}</td><td class='muted'>"
         f"{_e(', '.join(sorted(labels.get(cat, set()))[:30]))}</td></tr>"
@@ -102,11 +108,14 @@ def verification_report(case: "Case", doc: "DocumentInfo", verification: "Verifi
               f"{verification.terms_checked} bekannten Originaldaten gefunden.</div>" if passed
               else "<div class='banner bad'>✘ Prüfung NICHT bestanden – bitte nicht "
               "weitergeben.</div>")
+    if passed and skipped:
+        banner = ("<div class='banner warn'>Bestanden, aber nicht vollständig geprüft. Nicht "
+                  f"ausgeführt: {_e('; '.join(skipped))}.</div>")
     mode = ("Alle Seiten als Bild neu aufgebaut (maximale Sicherheit)"
             if result.raster_pages == result.pages else
             f"{result.raster_pages} von {result.pages} Seiten als Bild neu aufgebaut "
-            "(Scans bzw. Seiten mit verstecktem Inhalt); übrige Seiten mit echter "
-            "Text-Schwärzung")
+            "(Scans, Seiten mit Bildern oder mit verstecktem Inhalt); übrige Seiten mit "
+            "echter Text-Schwärzung")
     body = f"""
 <h1>Prüfbericht Anonymisierung</h1>
 <p class="muted">Erstellt am {datetime.now():%d.%m.%Y um %H:%M} Uhr · Datei:
@@ -140,6 +149,10 @@ Auffälligkeiten wurden dem Nutzer zur Entscheidung vorgelegt.</li>
 <li>Eingebettete Schriften wurden auf die verbliebenen Zeichen reduziert; versteckte
 Alternativtexte (ActualText/Alt) entfernt; kleine Bilder (Logos, Unterschriften, Fotos)
 entfernt, sofern der Nutzer sie nicht ausdrücklich behalten hat.</li>
+<li>Übernommen wurde nur, was auf den Seiten sichtbar ist: verdeckter oder unsichtbarer
+Text (z.&nbsp;B. unter Balken, in weißer Schrift, außerhalb der Seite) wurde verworfen.
+Seiten mit Bildern wurden aus ihrer Darstellung neu aufgebaut – Kameradaten (EXIF/GPS)
+und abgeschnittene Bildteile sind nicht mehr enthalten.</li>
 <li>Geschwärzte Flächen: {_e(area_text or "keine")}. Handschriftliche Unterschriften,
 Handschrift und Stempel auf Scans werden automatisch erkannt.</li>
 </ul>

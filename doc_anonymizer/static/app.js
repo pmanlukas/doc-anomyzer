@@ -387,7 +387,7 @@ function caseChip(c) {
     return h("span", { class: "chip bad" }, icon("alert"), "Bitte ansehen");
   }
   const map = {
-    neu: ["", "Leer"], analyse: ["work", "Wird gelesen …"], pruefung: ["warn", "Bitte prüfen"],
+    neu: ["", c.documents ? "Noch nicht gelesen" : "Leer"], analyse: ["work", "Wird gelesen …"], pruefung: ["warn", "Bitte prüfen"],
     schwaerzen: ["work", "Wird anonymisiert …"], fehler: ["bad", "Fehler"],
   };
   const [cls, label] = map[c.status] || ["", c.status];
@@ -485,7 +485,30 @@ async function viewCase(id) {
   if (c.status === "pruefung") return viewReview(c);
   if (c.status === "fertig") return viewResult(c);
   if (c.status === "fehler") return viewError(c);
+  if ((c.documents || []).length) return viewUnread(c);
   return viewHome();
+}
+
+/** A case whose documents have not been read (e.g. reading was cancelled). */
+function viewUnread(c) {
+  setTitle(c.title);
+  render(h("div", { class: "panel" },
+    h("h1", {}, "Diese Akte wurde noch nicht gelesen"),
+    h("p", { class: "muted" }, `${plural(c.documents.length, "PDF-Datei liegt", "PDF-Dateien liegen")} bereit. ` +
+      "Das Lesen wurde abgebrochen oder noch nicht gestartet."),
+    h("div", { class: "row" },
+      h("button", {
+        class: "btn primary", onclick: async () => {
+          try { await api("POST", `/api/cases/${c.id}/analyse`); route(); } catch (err) { showError(err); }
+        },
+      }, icon("refresh"), "Jetzt lesen"),
+      h("button", {
+        class: "btn", onclick: async () => {
+          if (!await confirmDialog({ title: "Akte löschen?", text: "Die gespeicherten Kopien der Dokumente werden gelöscht. Ihre Originaldateien bleiben unberührt.", ok: "Löschen", danger: true })) return;
+          try { await api("DELETE", `/api/cases/${c.id}`); location.hash = "#/"; } catch (err) { showError(err); }
+        },
+      }, icon("trash"), "Akte löschen"),
+      h("a", { class: "btn", href: "#/" }, "Zur Startseite"))));
 }
 
 function viewProgress(c) {
@@ -493,6 +516,23 @@ function viewProgress(c) {
   setTitle(isAnalyse ? "Dokumente werden gelesen" : "Dokumente werden anonymisiert");
   const bar = h("div", { class: "progress" }, h("div"));
   const stepLabel = h("p", { class: "progress-step" }, "Wird vorbereitet …");
+  let cancelling = false;
+  const cancelBtn = h("button", {
+    class: "btn small", id: "btn-cancel", onclick: async () => {
+      if (!await confirmDialog({
+        title: "Verarbeitung abbrechen?",
+        text: isAnalyse ? "Das Lesen wird beendet. Die Akte bleibt in der Liste und kann später neu gelesen oder gelöscht werden."
+          : "Das Anonymisieren wird beendet, bereits erzeugte Ergebnisse dieses Durchlaufs werden entfernt. Ihre Prüfung bleibt erhalten.",
+        ok: "Abbrechen", cancel: "Weiterlaufen lassen", danger: true,
+      })) return;
+      try {
+        await api("POST", `/api/cases/${c.id}/cancel`);
+        cancelling = true;
+        cancelBtn.disabled = true;
+        stepLabel.textContent = "Wird abgebrochen …";
+      } catch (err) { showError(err); }
+    },
+  }, icon("x"), "Abbrechen");
   render(
     steps(isAnalyse ? 0 : 2),
     h("div", { class: "panel progress-card" },
@@ -503,7 +543,8 @@ function viewProgress(c) {
         : "Die Daten werden unwiderruflich entfernt, neue PDFs erzeugt und jedes Ergebnis in vier Stufen geprüft."),
       bar, stepLabel,
       h("p", { class: "muted small" }, "Das kann bei großen oder eingescannten Dokumenten einige Minuten dauern. " +
-        "Die Verarbeitung läuft weiter, auch wenn Sie dieses Fenster schließen.")),
+        "Die Verarbeitung läuft weiter, auch wenn Sie dieses Fenster schließen."),
+      h("div", { class: "row center-row" }, cancelBtn)),
   );
   async function poll() {
     try {
@@ -512,7 +553,8 @@ function viewProgress(c) {
       const p = cur.progress || {};
       const pct = p.total ? Math.round((100 * p.done) / p.total) : 0;
       bar.firstChild.style.width = `${Math.max(3, pct)}%`;
-      stepLabel.textContent = `${p.total > 1 ? `${p.done} von ${p.total} · ` : ""}${p.step || "Wartet …"}`;
+      stepLabel.textContent = cancelling ? "Wird abgebrochen …"
+        : `${p.total > 1 ? `${p.done} von ${p.total} · ` : ""}${p.step || "Wartet …"}`;
     } catch (err) {
       if (err.status === 404) return route();
       stepLabel.textContent = "Verbindung zum Programm unterbrochen …";
@@ -525,17 +567,30 @@ function viewProgress(c) {
 function viewError(c) {
   setTitle("Problem");
   const unreadable = (c.documents || []).filter((d) => d.error);
+  const reviewable = !!(c.summary && c.summary.reviewable);
   render(h("div", { class: "panel" },
     h("h1", {}, "Das hat leider nicht geklappt"),
     notice("bad", c.error || "Unbekannter Fehler"),
     unreadable.length > 1 ? h("ul", {}, unreadable.slice(0, 20).map((d) => h("li", {}, h("strong", {}, d.name), ": ", d.error))) : null,
     h("p", { class: "muted" }, "Ihre Originaldateien wurden nicht verändert."),
     h("div", { class: "row" },
-      h("button", {
+      // After a problem while anonymising, the review (decisions, marked
+      // areas) is still there – reading everything again would discard it.
+      reviewable ? h("button", {
         class: "btn primary", onclick: async () => {
+          try { await api("POST", `/api/cases/${c.id}/review`); route(); } catch (err) { showError(err); }
+        },
+      }, icon("edit"), "Zurück zur Prüfung") : null,
+      h("button", {
+        class: reviewable ? "btn" : "btn primary", onclick: async () => {
+          if (reviewable && !await confirmDialog({
+            title: "Dokumente neu lesen?",
+            text: "Die Dokumente werden noch einmal von vorn gelesen. Ihre bisherigen Entscheidungen und markierten Bereiche in dieser Akte gehen dabei verloren.",
+            ok: "Neu lesen", danger: true,
+          })) return;
           try { await api("POST", `/api/cases/${c.id}/analyse`); route(); } catch (err) { showError(err); }
         },
-      }, icon("refresh"), "Noch einmal versuchen"),
+      }, icon("refresh"), reviewable ? "Dokumente neu lesen" : "Noch einmal versuchen"),
       h("a", { class: "btn", href: "#/" }, "Zur Startseite"))));
 }
 
@@ -978,6 +1033,9 @@ function docState(d) {
   return (d.verification || {}).passed ? "ok" : "failed";
 }
 
+/** Verification stages that could not be carried out (neither passed nor failed). */
+const skippedChecks = (v) => ((v || {}).checks || []).filter((ch) => ch.skipped);
+
 function viewResult(c) {
   setTitle("Ergebnis");
   const docs = c.documents.map((d, i) => ({ d, i, v: d.verification || {}, state: docState(d) }));
@@ -985,6 +1043,7 @@ function viewResult(c) {
   const failed = docs.filter((x) => x.state === "failed");
   const errors = docs.filter((x) => x.state === "error");
   const hints = ok.filter((x) => (x.v.suspects || []).length);
+  const unchecked = ok.filter((x) => skippedChecks(x.v).length);
   const order = { failed: 0, error: 1, ok: 2 };
   docs.sort((a, b) => order[a.state] - order[b.state] || ((b.v.suspects || []).length - (a.v.suspects || []).length) || a.i - b.i);
 
@@ -993,13 +1052,15 @@ function viewResult(c) {
     catch (err) { showError(err); }
   };
   const rows = docs.map(({ d, i, v, state }) => h("div", { class: "doc-row" },
-    state === "ok" ? h("span", { class: "chip ok" }, icon("check"), "Geprüft")
+    state === "ok" ? (skippedChecks(v).length
+      ? h("span", { class: "chip warn", title: "Mindestens eine Prüfstufe wurde nicht ausgeführt" }, icon("alert"), "Teilweise geprüft")
+      : h("span", { class: "chip ok" }, icon("check"), "Geprüft"))
       : state === "failed" ? h("span", { class: "chip bad" }, icon("alert"), "Nicht bestanden")
         : h("span", { class: "chip bad" }, icon("x"), "Nicht verarbeitet"),
     h("div", {},
       h("div", { class: "name" }, state === "error" ? d.name : baseName(d.output)),
       h("div", { class: "sub" }, state === "error" ? d.error
-        : state === "failed" ? "Bitte nicht weitergeben. Die Datei liegt im Unterordner „NICHT BESTANDEN“."
+        : state === "failed" ? "Bitte nicht weitergeben. Die Datei liegt getrennt im Ordner „VERTRAULICH_nicht_weitergeben“."
           : `${plural(d.pages, "Seite", "Seiten")}${(v.suspects || []).length ? ` · ${plural(v.suspects.length, "Hinweis", "Hinweise")} der Nachkontrolle` : ""}`)),
     state === "error" ? h("span", {}) : h("div", { class: "actions" },
       state === "ok" ? h("button", { class: "btn small", onclick: () => openFile(i, "pdf"), title: "Anonymisiertes PDF öffnen" }, icon("external"), "Öffnen") : null,
@@ -1014,10 +1075,16 @@ function viewResult(c) {
     heroClass = "warn"; heroIcon = "alert";
     headline = `${plural(ok.length, "Dokument", "Dokumente")} fertig, ${errors.length} nicht verarbeitet`;
     sub = "Die verarbeiteten Dokumente haben alle Prüfstufen bestanden. Die Gründe für die übrigen stehen unten.";
+  } else if (unchecked.length) {
+    heroClass = "warn"; heroIcon = "alert";
+    headline = ok.length === 1 ? "Fertig – aber nicht vollständig geprüft" : `Fertig – ${unchecked.length} von ${ok.length} Dokumenten nicht vollständig geprüft`;
+    sub = `Nicht ausgeführt: ${[...new Set(unchecked.flatMap((x) => skippedChecks(x.v).map((ch) => ch.name.split(" – ").slice(0, 2).join(" – "))))].join(", ")}. ` +
+      "Die übrigen Prüfungen sind bestanden. Sie können die Prüfstufen in den Einstellungen (Erweitert) wieder einschalten.";
   } else {
     headline = ok.length === 1 ? "Fertig – Ihr Dokument ist anonymisiert" : `Fertig – ${ok.length} Dokumente sind anonymisiert`;
     sub = "Alle Prüfstufen bestanden: Die entfernten Daten sind im Ergebnis weder sichtbar noch wiederherstellbar.";
   }
+  const hasFolder = !!(c.summary ? c.summary.has_folder : c.output_dir);
 
   render(
     steps(3),
@@ -1025,13 +1092,14 @@ function viewResult(c) {
       h("div", { class: "big-icon" }, icon(heroIcon)),
       h("h1", {}, headline),
       h("p", { class: "muted", style: "max-width:680px;margin:0 auto" }, sub),
-      h("div", { class: "where" }, h("span", { class: "muted" }, "Gespeichert in "), pathLabel(c.output_dir)),
+      hasFolder ? h("div", { class: "where" }, h("span", { class: "muted" }, "Gespeichert in "), pathLabel(c.output_dir)) : null,
+      hasFolder ? h("p", { class: "muted small", style: "margin:.4rem 0 1.1rem" }, "Dieser Ordner enthält nur geprüfte Ergebnisse – Sie können ihn als Ganzes weitergeben.") : null,
       h("div", { class: "row" },
-        h("button", {
+        hasFolder ? h("button", {
           class: "btn primary big", id: "btn-open-folder", onclick: async () => {
             try { await api("POST", `/api/cases/${c.id}/open-folder`); } catch (err) { showError(err); }
           },
-        }, icon("folder"), "Ordner öffnen"),
+        }, icon("folder"), "Ordner öffnen") : null,
         ok.length ? h("a", { class: "btn big", href: `/api/cases/${c.id}/zip`, title: "Alle geprüften Ergebnisse in einer ZIP-Datei – ohne die vertrauliche Zuordnungstabelle" }, icon("archive"), "Alle als ZIP") : null,
         h("a", { class: "btn big", href: "#/" }, icon("plus"), "Weitere Dokumente"))),
     hints.length && !failed.length ? notice("info", `${plural(hints.length, "Dokument enthält", "Dokumente enthalten")} Hinweise der Nachkontrolle – meist Fehlalarme wie Fachbegriffe. Ein kurzer Blick lohnt sich.`) : null,
@@ -1046,7 +1114,10 @@ function viewResult(c) {
             try { await api("POST", `/api/cases/${c.id}/review`); route(); } catch (err) { showError(err); }
           },
         }, icon("edit"), "Nachbessern"),
-        c.mapping ? h("a", { class: "btn small", href: `/api/cases/${c.id}/mapping`, target: "_blank", rel: "noopener", title: "Zeigt, welcher Name zu welcher Abkürzung wurde. Vertraulich – niemals weitergeben!" }, icon("lock"), "Zuordnungstabelle (vertraulich)") : null)),
+        c.mapping ? h("a", { class: "btn small", href: `/api/cases/${c.id}/mapping`, target: "_blank", rel: "noopener", title: "Zeigt, welcher Name zu welcher Abkürzung wurde. Vertraulich – niemals weitergeben!" }, icon("lock"), "Zuordnungstabelle (vertraulich)") : null),
+      h("p", { class: "muted small", style: "margin:.7rem 0 0" },
+        "Beim Nachbessern werden die bisherigen Ergebnisdateien dieser Akte durch die neuen ersetzt. ",
+        c.mapping ? "Die Zuordnungstabelle liegt getrennt von den Ergebnissen im Ordner „VERTRAULICH_nicht_weitergeben“." : "")),
     h("details", { class: "panel" },
       h("summary", { style: "cursor:pointer;font-weight:650" }, "Was genau wurde geprüft?"),
       h("ol", { class: "plain", style: "margin-top:.8rem" },
@@ -1112,8 +1183,11 @@ function resultCard(c, d, i, close) {
 
   return h("div", {},
     passed
-      ? notice("ok", h("strong", {}, "Prüfung bestanden. "),
-        `Keine der ${v.terms_checked} bekannten Originalangaben ist im Ergebnis enthalten oder wiederherstellbar (${plural(v.pages_checked, "Seite", "Seiten")} geprüft).`)
+      ? (skippedChecks(v).length
+        ? notice("warn", h("strong", {}, "Bestanden, aber nicht vollständig geprüft. "),
+          `Nicht ausgeführt: ${skippedChecks(v).map((ch) => `${ch.name} (${ch.detail})`).join("; ")}.`)
+        : notice("ok", h("strong", {}, "Prüfung bestanden. "),
+          `Keine der ${v.terms_checked} bekannten Originalangaben ist im Ergebnis enthalten oder wiederherstellbar (${plural(v.pages_checked, "Seite", "Seiten")} geprüft).`))
       : notice("bad", h("strong", {}, "Prüfung nicht bestanden – bitte NICHT weitergeben. "),
         "Gehen Sie über „Nachbessern“ zurück und ergänzen Sie die Schwärzungen, z. B. indem Sie die Stelle mit der Maus einrahmen."),
     h("div", { class: "row" },
@@ -1136,7 +1210,7 @@ function resultCard(c, d, i, close) {
     h("div", { class: "preview" }, previewImg),
     h("details", { style: "margin-top:1rem" }, h("summary", { style: "cursor:pointer;font-weight:600" }, "Alle automatischen Prüfungen anzeigen"),
       h("ul", { class: "checks" }, (v.checks || []).map((ch) =>
-        h("li", { class: ch.ok ? "ok" : "bad" }, ch.name, ch.detail ? h("span", { class: "muted small" }, ` – ${ch.detail}`) : null)))));
+        h("li", { class: ch.skipped ? "skip" : ch.ok ? "ok" : "bad" }, ch.name, ch.detail ? h("span", { class: "muted small" }, ` – ${ch.detail}`) : null)))));
 }
 
 // ---------------------------------------------------------- folder picker
@@ -1283,12 +1357,12 @@ async function openSettings() {
       h("h3", {}, "Datenschutz auf diesem Computer"),
       h("div", { class: "row" }, h("span", {}, "Arbeitskopien der Originale löschen"), keep),
       h("p", { class: "muted small", style: "margin-top:.4rem" }, "Das Programm speichert zu jeder Akte eine Arbeitskopie, damit Sie später nachbessern können. Ihre Ergebnisse im Speicherort sind davon nicht betroffen."),
-      h("label", { class: "check" }, learn, h("span", {}, "Aus meinen Entscheidungen lernen ", h("span", { class: "muted small" }, "(wird nur auf diesem Computer gespeichert)"))),
+      h("label", { class: "check" }, learn, h("span", {}, "Aus meinen Entscheidungen lernen ", h("span", { class: "muted small" }, "(nur auf diesem Computer; gemerkt werden der Begriff und wenige Wörter Zusammenhang – auch nach dem Löschen der Akte, bis Sie „Gelerntes löschen“ wählen)"))),
       h("p", { class: "muted small" },
         `Bisher gelernt: ${plural(stats.entscheidungen, "Entscheidung", "Entscheidungen")}, ${plural(stats.immer_schwaerzen, "Begriff wird", "Begriffe werden")} künftig immer geschwärzt. `,
         h("button", {
           class: "btn link small", onclick: async () => {
-            if (!await confirmDialog({ title: "Gelerntes löschen?", text: "Alle gespeicherten Entscheidungen und das daraus Gelernte werden gelöscht.", ok: "Löschen", danger: true })) return;
+            if (!await confirmDialog({ title: "Gelerntes löschen?", text: "Alle gespeicherten Entscheidungen und das daraus Gelernte (auch das angepasste Sprachmodell) werden gelöscht. Die Listen „Nie schwärzen“ und „Immer schwärzen“ bleiben – sie stehen unter „Erweiterte Einstellungen“.", ok: "Löschen", danger: true })) return;
             try { await api("POST", "/api/learning/clear"); toast("Gelerntes gelöscht"); } catch (err) { showError(err); }
           },
         }, "Gelerntes löschen"))),
@@ -1312,7 +1386,8 @@ async function openSettings() {
         stats.training && stats.training.message ? ` · ${stats.training.message}` : "",
         stats.custom_model ? " · Ein an Ihre Entscheidungen angepasstes Sprachmodell ist aktiv." : ""),
       status.managed && status.platform === "win32" ? [h("h3", {}, "Programmfenster"),
-        h("label", { class: "check" }, appWindow, "In einem eigenen Fenster öffnen (statt als Tab im Browser)")] : null,
+        h("label", { class: "check" }, appWindow, "In einem eigenen, abgeschotteten Fenster öffnen – empfohlen ",
+          h("span", { class: "muted small" }, "(ohne Browser-Erweiterungen; sonst als Tab im Standardbrowser)"))] : null,
       h("div", { class: "grid2", style: "margin-top:.6rem" },
         h("div", {}, h("h3", {}, "Nie schwärzen"), h("p", { class: "muted small" }, "Ein Begriff pro Zeile, z. B. der Name Ihrer Kanzlei."), allow),
         h("div", {}, h("h3", {}, "Immer schwärzen"), h("p", { class: "muted small" }, "Ein Begriff pro Zeile – wird in jeder Akte gesucht."), deny))),
@@ -1335,11 +1410,13 @@ function openHelp() {
       h("dt", {}, "Werden meine Dokumente ins Internet übertragen?"),
       h("dd", {}, "Nein. Alles wird ausschließlich auf diesem Computer verarbeitet. Das Programm braucht keine Internetverbindung."),
       h("dt", {}, "Wo finde ich die fertigen Dateien?"),
-      h("dd", {}, "Im Speicherort, der auf der Startseite steht (anfangs der Ordner „Anonymisiert“ in Ihrem Benutzerordner). Für jede Akte gibt es einen Unterordner mit Datum."),
+      h("dd", {}, "Im Speicherort, der auf der Startseite steht (anfangs der Ordner „Anonymisiert“ in Ihrem Benutzerordner). Für jede Akte gibt es einen Unterordner mit Datum. Er enthält nur geprüfte Ergebnisse und kann als Ganzes weitergegeben werden."),
       h("dt", {}, "Was ist die Zuordnungstabelle?"),
-      h("dd", {}, "Sie zeigt, welcher Name zu welcher Abkürzung wurde, und liegt im Unterordner „VERTRAULICH_nicht_weitergeben“. Sie hebt die Anonymisierung auf – bitte niemals weitergeben oder hochladen."),
+      h("dd", {}, "Sie zeigt, welcher Name zu welcher Abkürzung wurde. Sie liegt getrennt von den Ergebnissen im Ordner „VERTRAULICH_nicht_weitergeben“ (im Speicherort). Sie hebt die Anonymisierung auf – bitte niemals weitergeben oder hochladen."),
       h("dt", {}, "Was bedeutet „Nicht bestanden“?"),
-      h("dd", {}, "Die automatische Prüfung hat im Ergebnis noch Originaldaten gefunden. Die Datei liegt dann in einem eigenen Unterordner und sollte nicht weitergegeben werden. Mit „Nachbessern“ ergänzen Sie die fehlenden Schwärzungen."),
+      h("dd", {}, "Die automatische Prüfung hat im Ergebnis noch Originaldaten gefunden. Die Datei kommt dann nicht in den Ergebnisordner, sondern in den Ordner „VERTRAULICH_nicht_weitergeben“. Mit „Nachbessern“ ergänzen Sie die fehlenden Schwärzungen."),
+      h("dt", {}, "Was passiert mit verstecktem Text und mit Fotos?"),
+      h("dd", {}, "Ins Ergebnis kommt nur, was auf der Seite zu sehen ist. Text, der in der Datei steckt, aber nicht sichtbar ist (z. B. unter einem schwarzen Balken oder in weißer Schrift), wird nicht übernommen. Seiten mit Bildern werden neu aufgebaut – Kameradaten wie Aufnahmeort und Gerät sowie abgeschnittene Bildteile sind danach weg."),
       h("dt", {}, "Werden meine Originaldateien verändert?"),
       h("dd", {}, "Nein. Das Programm arbeitet mit einer Kopie und erzeugt neue Dateien."),
       h("dt", {}, "Wie beende ich das Programm?"),
@@ -1428,5 +1505,8 @@ document.getElementById("btn-help").addEventListener("click", openHelp);
 api("GET", "/api/status").then((s) => {
   const quit = document.getElementById("btn-quit");
   if (s && s.managed) { quit.hidden = false; quit.addEventListener("click", quitProgram); }
+  // On a shared computer everybody runs an own copy – show whose this is.
+  const badge = document.querySelector(".badge-local");
+  if (s && s.user && badge) badge.title += ` Dieses Programm läuft für das Benutzerkonto „${s.user}“.`;
 }).catch(() => {});
 route();

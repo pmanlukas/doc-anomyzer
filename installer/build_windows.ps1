@@ -33,12 +33,45 @@ $Downloads = Join-Path $Build "downloads"
 
 function Step([string]$Text) { Write-Host "`n=== $Text ===" }
 
+# SHA-256 of everything that is downloaded and ends up in the setup. A file
+# that does not match (tampered with, replaced upstream, cut off) stops the
+# build.
+$Checksums = @{
+  "tesseract-ocr-w64-setup-5.4.0.20240606.exe" = "c885fff6998e0608ba4bb8ab51436e1c6775c2bafc2559a19b423e18678b60c9"
+  "deu.traineddata"                            = "8407331d6aa0229dc927685c01a7938fc5a641d1a9524f74838cdac599f0d06e"
+  "eng.traineddata"                            = "8280aed0782fe27257a68ea10fe7ef324ca0f8d85bd2fd145d1c2b560bcb66ba"
+  "osd.traineddata"                            = "9cf5d576fcc47564f11265841e5ca839001e7e6f38ff7f7aacf46d15a96b00ff"
+  "de_core_news_lg-3.8.0-py3-none-any.whl"     = "36fda650e476b54d5e87803635e36dadd1e8e034c4b5962088586d684f4c9fed"
+}
+
 function Get-Download([string]$Url, [string]$Target) {
   if (-not (Test-Path $Target)) {
     Write-Host "Lade $Url"
     Invoke-WebRequest -Uri $Url -OutFile "$Target.part" -UseBasicParsing
     Move-Item "$Target.part" $Target
   }
+  $name = Split-Path $Target -Leaf
+  $actual = (Get-FileHash $Target -Algorithm SHA256).Hash.ToLower()
+  $expected = $Checksums[$name]
+  if ($expected) {
+    if ($actual -ne $expected) {
+      Remove-Item $Target -Force   # never keep (or cache) a wrong file
+      throw "Prüfsumme von $name stimmt nicht: erwartet $expected, erhalten $actual"
+    }
+    Write-Host "[OK] Prüfsumme $name"
+  } else {
+    Write-Host "SHA-256 $name = $actual (kein fester Prüfwert – Signatur wird geprüft)"
+  }
+}
+
+# Programs signed by their publisher (Python): the Windows signature must be
+# valid and belong to the expected publisher.
+function Assert-Signature([string]$File, [string]$Publisher) {
+  $sig = Get-AuthenticodeSignature $File
+  if ($sig.Status -ne "Valid" -or $sig.SignerCertificate.Subject -notmatch [regex]::Escape($Publisher)) {
+    throw "Signatur von $(Split-Path $File -Leaf) ungültig oder nicht von '$Publisher' ($($sig.Status); $($sig.SignerCertificate.Subject))"
+  }
+  Write-Host "[OK] Signatur $(Split-Path $File -Leaf): $Publisher"
 }
 
 function Assert-Exit([string]$What) {
@@ -57,6 +90,9 @@ Step "Python $PythonEmbedVersion (embeddable)"
 $embed = Join-Path $Downloads "python-$PythonEmbedVersion-embed-amd64.zip"
 Get-Download "https://www.python.org/ftp/python/$PythonEmbedVersion/python-$PythonEmbedVersion-embed-amd64.zip" $embed
 Expand-Archive $embed -DestinationPath "$App\python"
+foreach ($file in "python.exe", "pythonw.exe", "python312.dll") {
+  Assert-Signature "$App\python\$file" "Python Software Foundation"
+}
 $pth = Get-ChildItem "$App\python\python3*._pth" | Select-Object -First 1
 $stdlib = (Get-ChildItem "$App\python\python3*.zip" | Select-Object -First 1).Name
 # Search path: standard library, python folder, program folder (..), packages.
@@ -80,6 +116,10 @@ Get-Download $SpacyModelUrl $model
 Assert-Exit "pip install"
 # Command line wrappers are not needed (and would point to the build Python).
 Remove-Item -Recurse -Force "$App\python\Lib\site-packages\bin" -ErrorAction SilentlyContinue
+# Exactly which versions are inside this setup (for later questions and audits).
+& python -m pip list --path "$App\python\Lib\site-packages" --format=freeze --disable-pip-version-check |
+  Set-Content -Path "$App\enthaltene_pakete.txt" -Encoding utf8
+Get-Content "$App\enthaltene_pakete.txt"
 
 Step "Tesseract (aus dem UB-Mannheim-Installer entpackt)"
 $tessSetup = Join-Path $Downloads (Split-Path $TesseractUrl -Leaf)
@@ -104,7 +144,8 @@ $tessdata = "$App\models\tessdata"
 New-Item -ItemType Directory -Force $tessdata | Out-Null
 foreach ($lang in "deu", "eng", "osd") {
   $file = Join-Path $Downloads "$lang.traineddata"
-  Get-Download "https://raw.githubusercontent.com/tesseract-ocr/tessdata_best/main/$lang.traineddata" $file
+  # Fixed release (not the moving "main" branch).
+  Get-Download "https://raw.githubusercontent.com/tesseract-ocr/tessdata_best/4.1.0/$lang.traineddata" $file
   Copy-Item $file $tessdata
 }
 # Configuration files of Tesseract (output formats) next to the language files;
@@ -140,4 +181,10 @@ if (-not $SkipSetup) {
   Assert-Exit "Inno Setup"
   $setup = Get-Item "$Root\dist\Dokumenten-Anonymisierer-Setup.exe"
   Write-Host ("Setup: {0} ({1:N0} MB)" -f $setup.FullName, ($setup.Length / 1MB))
+  # Checksum next to the setup: whoever receives the file can compare it
+  # (PowerShell: Get-FileHash Dokumenten-Anonymisierer-Setup.exe).
+  $hash = (Get-FileHash $setup.FullName -Algorithm SHA256).Hash.ToLower()
+  Set-Content -Path "$Root\dist\Dokumenten-Anonymisierer-Setup.exe.sha256" -Encoding ascii `
+    -Value "$hash  Dokumenten-Anonymisierer-Setup.exe"
+  Write-Host "SHA-256: $hash"
 }

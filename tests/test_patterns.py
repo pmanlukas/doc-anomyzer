@@ -71,3 +71,14 @@ def test_ocr_variants():
     assert "11.04.1950" in f["BIRTH_DATE"]
     assert "36 266759 s 152" in f["SOCIAL_SECURITY"]
     assert "bekir.weihmann@ hotmail.de" in f["EMAIL"]
+
+
+def test_postcode_and_place_separated_by_a_line_break():
+    """"… Lindenweg 3, 06098" / "Wurzen." – the address wraps at the line end."""
+    text = "Vermietet wird die Wohnung im Hause Lindenweg 3, 06098\nWurzen.\n§ 2 Miete"
+    assert "06098\nWurzen" in found(text)["ADDRESS"]
+    # A number at the end of a line is not a postcode.
+    text = "Ihre Rechnungsnummer lautet 12345\nMit freundlichen Grüßen"
+    assert not any("12345" in t for t in found(text).get("ADDRESS", ()))
+    text = "Kosten laut Anlage, 12345\nEuro insgesamt"
+    assert not any("Euro" in t for t in found(text).get("ADDRESS", ()))

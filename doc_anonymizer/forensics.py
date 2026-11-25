@@ -18,6 +18,10 @@ independent techniques:
 4. **Linking data** – the document ID must differ from the original so the
    file cannot be matched to the source; no incremental updates, no
    thumbnails, no embedded files.
+5. **Nothing hidden** – every word of the text pages must be *visible*
+   (rendered with and without text, see :func:`extract.visible_rects`), and
+   the only images in the file are the freshly rendered page images: no
+   original image data (camera data, cropped-away parts) can be left.
 """
 
 from __future__ import annotations
@@ -43,7 +47,7 @@ MAX_IMAGE_PIXELS = 120_000_000
 #: Keys that must not appear in an anonymised file (hidden text/data carriers).
 SUSPICIOUS_KEYS = ("/ActualText", "/Alt ", "/Alt(", "/Alt<", "/StructTreeRoot", "/PieceInfo",
                    "/EmbeddedFile", "/JavaScript", "/AcroForm", "/Thumb", "/OpenAction",
-                   "/Outlines", "/Annots")
+                   "/Outlines", "/Annots", "/Metadata")
 
 
 @dataclass
@@ -216,6 +220,10 @@ def _image_ocr(doc: pymupdf.Document, terms, settings: Settings, skip_pages: set
                     pix = pymupdf.Pixmap(pymupdf.csGRAY, pix)
                 image = Image.frombytes("L", (pix.width, pix.height), pix.samples)
             except Exception:  # noqa: BLE001 - exotic image formats
+                # Cannot be read, so it cannot be checked: re-build the page.
+                result.findings.append(Finding(
+                    "Bild-OCR (Bild nicht lesbar – Seite wird neu aufgebaut)",
+                    "", "", page.number + 1))
                 continue
             # Small images are enlarged so Tesseract can read them.
             if image.width < 1200:
@@ -227,6 +235,45 @@ def _image_ocr(doc: pymupdf.Document, terms, settings: Settings, skip_pages: set
                 if contains(hay, term, compact, category):
                     result.findings.append(Finding("Bild-OCR (eingebettetes Bild)", term, eid,
                                                    page.number + 1))
+
+
+def _nothing_hidden(doc: pymupdf.Document, raster_pages: set[int],
+                    result: ForensicResult) -> None:
+    """Text pages: every word visible, no images. Whole file: no stray images.
+
+    Raster pages consist of exactly one freshly rendered image and a text
+    layer written by this program from the anonymised, visible words.
+    """
+    from .extract import visible_rects
+
+    page_images: set[int] = set()
+    for page in doc:
+        if page.number in raster_pages:
+            page_images.update(img[0] for img in page.get_images(full=True))
+            continue
+        if page.get_images(full=True) or page.get_image_info():
+            result.findings.append(Finding("Originalbild auf einer Textseite", "", "",
+                                           page.number + 1))
+            continue
+        words = [w for w in page.get_text("words", clip=pymupdf.INFINITE_RECT())
+                 if any(ch.isalnum() for ch in w[4])]
+        if not words:
+            continue
+        try:
+            visible = visible_rects(doc, page, [w[:4] for w in words])
+        except Exception:  # noqa: BLE001 - cannot be checked: re-build the page
+            visible = [False]
+        if not all(visible):
+            result.findings.append(Finding("verdeckter oder unsichtbarer Text", "", "",
+                                           page.number + 1))
+    for xref in range(1, doc.xref_length()):
+        try:
+            if xref not in page_images and doc.xref_get_key(xref, "Subtype")[1] == "/Image":
+                # Not shown as a page image – e.g. inside a pattern or unused.
+                result.findings.append(Finding("Bilddaten außerhalb der Seitenbilder", "", ""))
+                break
+        except Exception:  # noqa: BLE001 - not a dictionary
+            continue
 
 
 def forensic_check(output: Path, source: Path | None, terms, settings: Settings,
@@ -247,6 +294,9 @@ def forensic_check(output: Path, source: Path | None, terms, settings: Settings,
             for term, eid, category, compact in terms:
                 if _contains(hay, term, compact, category):
                     result.findings.append(Finding(name, term, eid, number))
+
+    result.methods.append("Suche nach verdecktem Text und nach Original-Bilddaten")
+    _nothing_hidden(doc, raster_pages, result)
 
     if ocr.is_available():
         result.methods.append("Texterkennung aller eingebetteten Bilder in Originalauflösung")

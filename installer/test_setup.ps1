@@ -43,6 +43,20 @@ function Start-Program([string[]]$Arguments) {
   Start-Process -FilePath "$App\python\pythonw.exe" -ArgumentList (@("-m", "doc_anonymizer.launcher") + $Arguments) `
     -WorkingDirectory $App -PassThru
 }
+function Get-State { Get-Content (Join-Path $UserData "server.json") -Raw | ConvertFrom-Json }
+function Get-Status {
+  # Like a program that knows the access token (the page itself uses a cookie).
+  try {
+    $s = Get-State
+    return Invoke-RestMethod -Uri "http://127.0.0.1:$($s.port)/api/status" -TimeoutSec 5 -NoProxy `
+      -Headers @{ "X-Anonymizer-Token" = $s.token }
+  } catch { return $null }
+}
+function Get-WindowProcesses {
+  # Edge processes of the program window (they use the program's own profile).
+  Get-CimInstance Win32_Process -Filter "Name='msedge.exe'" |
+    Where-Object { $_.CommandLine -like "*DocAnonymizer\fenster*" }
+}
 
 Step "Setup"
 $size = (Get-Item $Setup).Length / 1MB
@@ -57,6 +71,7 @@ Write-Host ("Installationsdauer: {0:N0} s" -f $sw.Elapsed.TotalSeconds)
 Check (Test-Path "$App\python\pythonw.exe") "Programm in $App installiert"
 Check (Test-Path "$App\tesseract\tesseract.exe") "Tesseract mitinstalliert"
 Check (Test-Path "$App\models\tessdata\deu.traineddata") "Deutsche OCR-Sprachdatei mitinstalliert"
+Check (Test-Path "$App\enthaltene_pakete.txt") "Liste der enthaltenen Pakete vorhanden"
 $desktop = Join-Path ([Environment]::GetFolderPath("Desktop")) "Dokumenten-Anonymisierer.lnk"
 $startmenu = Join-Path ([Environment]::GetFolderPath("Programs")) "Dokumenten-Anonymisierer.lnk"
 Check (Test-Path $desktop) "Desktop-Symbol vorhanden"
@@ -110,6 +125,54 @@ $idle = Start-Program @("--kein-browser")
 Check (Wait-Until { $null -ne (Get-Ping) } 120) "Programm gestartet"
 Check ($idle.WaitForExit(90000)) "Programm beendet sich ohne geöffnete Seite von selbst"
 Remove-Item Env:\DOC_ANONYMIZER_IDLE_SECONDS, Env:\DOC_ANONYMIZER_STARTUP_SECONDS
+
+Step "Programmfenster: Microsoft Edge mit eigenem Profil"
+# The real start as from the desktop symbol: the window must open, be let in
+# with its one-time ticket and keep the program alive; closing the window
+# ends the program.
+$edge = @("${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe",
+          "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
+if (-not $edge) {
+  Write-Host "FENSTERTEST: übersprungen (Microsoft Edge ist auf diesem Rechner nicht installiert)"
+} else {
+  $env:DOC_ANONYMIZER_CLOSE_SECONDS = "10"
+  $env:DOC_ANONYMIZER_IDLE_SECONDS = "45"
+  $env:DOC_ANONYMIZER_STARTUP_SECONDS = "150"
+  $win = Start-Program @()
+  Check (Wait-Until { $null -ne (Get-Ping) } 120) "Programm gestartet"
+  $connected = Wait-Until { (Get-Status).page_connected -eq $true } 120
+  $procs = @(Get-WindowProcesses)
+  Write-Host ("Edge-Prozesse des Programmfensters: {0}" -f $procs.Count)
+  if (-not $connected) {
+    # Hosted build machines do not always have a usable desktop – reported,
+    # but only the checks that do not depend on it decide about the build.
+    Write-Host "FENSTERTEST: NICHT BESTÄTIGT – die Seite im Edge-Fenster hat sich nicht gemeldet"
+    $procs | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+    & "$App\python\python.exe" -m doc_anonymizer.launcher --beenden
+    Check ($win.WaitForExit(30000)) "Programm beendet"
+  } else {
+    Write-Host "[OK] Die Seite im Edge-Fenster ist mit dem Programm verbunden (Einmal-Ticket, Cookie)"
+    Check ($procs.Count -gt 0) "Fenster läuft mit eigenem Profil (getrennt vom normalen Browser)"
+    $token = (Get-State).token
+    Check (-not (($procs | ForEach-Object { $_.CommandLine }) -join " ").Contains($token)) `
+      "Der Zugangsschlüssel steht nicht in der Befehlszeile des Fensters"
+    Check (Test-Path (Join-Path $UserData "fenster")) "Profilordner des Fensters liegt im Datenordner des Programms"
+    Start-Sleep -Seconds 60   # longer than the idle limit: the open page keeps the program alive
+    Check (-not $win.HasExited) "Programm läuft weiter, solange das Fenster offen ist"
+    # Close the window like a user (WM_CLOSE); if that is not possible here, end Edge.
+    $ids = $procs | ForEach-Object { $_.ProcessId }
+    $closed = $false
+    Get-Process msedge -ErrorAction SilentlyContinue | Where-Object { $ids -contains $_.Id -and $_.MainWindowHandle -ne 0 } |
+      ForEach-Object { if ($_.CloseMainWindow()) { $closed = $true } }
+    if (-not $closed) { $procs | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } }
+    Write-Host ("Fenster geschlossen: {0}" -f $(if ($closed) { "über die Fensterschaltfläche" } else { "Prozess beendet" }))
+    Check ($win.WaitForExit(120000)) "Programm beendet sich nach dem Schließen des Fensters von selbst"
+    Check ($null -eq (Get-Ping)) "Port freigegeben"
+    Write-Host "FENSTERTEST: bestanden"
+  }
+  Remove-Item Env:\DOC_ANONYMIZER_CLOSE_SECONDS, Env:\DOC_ANONYMIZER_IDLE_SECONDS, Env:\DOC_ANONYMIZER_STARTUP_SECONDS
+  Get-WindowProcesses | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+}
 
 Step "Update: Setup erneut ausführen, während das Programm läuft"
 $running = Start-Program @("--kein-browser")

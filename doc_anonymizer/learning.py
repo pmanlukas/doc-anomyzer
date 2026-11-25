@@ -87,6 +87,7 @@ def clear() -> None:
         feedback_path().unlink(missing_ok=True)
         signature_feedback_path().unlink(missing_ok=True)
         (home_dir() / "unterschriften_modell.json").unlink(missing_ok=True)
+        _state_path().unlink(missing_ok=True)
     from .signatures import load_model
 
     load_model.cache_clear()

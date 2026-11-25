@@ -96,6 +96,12 @@ def main() -> int:
     call(base, "POST", f"/api/cases/{case['id']}/redact", {})
     case = wait_for(base, case["id"], {"fertig"}, 1800)
     ok = True
+    # The result folder holds only what may be passed on; the mapping table
+    # lies apart from it.
+    out_dir, mapping = Path(case["output_dir"]), Path(case["mapping"])
+    assert out_dir.is_dir() and mapping.is_file(), "Ergebnisordner/Zuordnungstabelle fehlen"
+    assert out_dir not in mapping.parents and "VERTRAULICH" in str(mapping)
+    assert not [p for p in out_dir.rglob("*") if "Zuordnung" in p.name]
     for doc in case["documents"]:
         passed = (doc.get("verification") or {}).get("passed")
         exists = bool(doc.get("output")) and Path(doc["output"]).exists()

@@ -50,14 +50,37 @@ def test_nothing_works_without_the_token(locked):
     assert locked.get("/static/app.css").status_code == 200
 
 
-def test_token_in_address_becomes_a_cookie(locked):
-    assert locked.get("/?token=falsch").status_code == 401
-    resp = locked.get(f"/?token={TOKEN}")
-    assert resp.status_code == 303 and resp.headers["Location"] == "/"  # token leaves the URL
+def test_ticket_in_address_becomes_a_cookie(locked):
+    """The window is let in with a one-time ticket – never with the token."""
+    new_ticket = locked.application.extensions["anonymizer"]["new_ticket"]
+    assert locked.get("/?ticket=falsch").status_code == 401
+    assert locked.get(f"/?ticket={TOKEN}").status_code == 401  # the token is no ticket
+    ticket = new_ticket()
+    resp = locked.get(f"/?ticket={ticket}")
+    assert resp.status_code == 303 and resp.headers["Location"] == "/"  # ticket leaves the URL
+    assert TOKEN not in resp.headers["Location"]
     cookie = resp.headers["Set-Cookie"]
     assert "HttpOnly" in cookie and "SameSite=Strict" in cookie
     assert locked.get("/api/cases").status_code == 200  # the test client keeps the cookie
     assert locked.get("/").status_code == 200
+
+
+def test_ticket_works_once_and_not_forever(tmp_path, monkeypatch):
+    app = create_app(CaseStore(tmp_path / "store"), start_worker=False, token=TOKEN)
+    new_ticket = app.extensions["anonymizer"]["new_ticket"]
+    ticket = new_ticket()
+    assert app.test_client().get(f"/?ticket={ticket}").status_code == 303
+    # A second browser (somebody who saw the address) does not get in.
+    assert app.test_client().get(f"/?ticket={ticket}").status_code == 401
+    # Tickets expire.
+    old = new_ticket(ttl=5)
+    clock = web.time.monotonic()
+    monkeypatch.setattr(web.time, "monotonic", lambda: clock + 60)
+    assert app.test_client().get(f"/?ticket={old}").status_code == 401
+    # Only the program itself can ask for a ticket.
+    assert app.test_client().post("/api/ticket", headers=H).status_code == 401
+    answer = app.test_client().post("/api/ticket", headers={**H, "X-Anonymizer-Token": TOKEN})
+    assert app.test_client().get(f"/?ticket={answer.get_json()['ticket']}").status_code == 303
 
 
 def test_token_header_for_programs(locked):
@@ -257,3 +280,87 @@ def test_reports_carry_their_own_csp(client, tmp_path):
     html = _page("Titel <script>alert(1)</script>", "<p>x</p>")
     assert "default-src 'none'" in html and "<script>alert" not in html
     assert json.dumps(html)  # plain text
+
+
+# ------------------------------------------------- review while a job is running
+
+def _case_under_review(tmp_path):
+    from doc_anonymizer.jobs import Worker
+
+    from .sample_docs import make_digital_pdf
+
+    store = CaseStore(tmp_path / "store")
+    case = store.create("Sperre")
+    store.add_document(case, "Klage.pdf", make_digital_pdf(tmp_path / "k.pdf").read_bytes())
+    worker = Worker.__new__(Worker)
+    worker.store = store
+    worker.analyse(case.id)
+    return store, store.load(case.id)
+
+
+def test_review_is_closed_while_the_case_is_processed(tmp_path):
+    """What the user saw when clicking "anonymise" is what gets anonymised."""
+    store, case = _case_under_review(tmp_path)
+    client = create_app(store, start_worker=False).test_client()
+    base = f"/api/cases/{case.id}"
+    entity = client.get(f"{base}/entities").get_json()[0]
+    box = {"doc": 0, "page": 0, "rect": [100, 100, 200, 130]}
+    assert client.post(f"{base}/manual", json=box, headers=H).status_code == 200
+    assert client.post(f"{base}/redact", headers=H).status_code == 200  # (no worker: stays queued)
+    assert store.load(case.id).status == "schwaerzen"
+    for method, path, body in (
+            ("post", f"{base}/manual", box),
+            ("delete", f"{base}/manual/0", None),
+            ("patch", f"{base}/entities/{entity['id']}", {"enabled": False}),
+            ("post", f"{base}/entities", {"text": "Abnahme", "category": "MANUAL"}),
+            ("post", f"{base}/entities/{entity['id']}/never", None),
+            ("post", f"{base}/accept-all", {}),
+            ("post", f"{base}/pages/reviewed", {"doc": 0, "page": 0})):
+        resp = getattr(client, method)(path, json=body, headers=H)
+        assert resp.status_code == 409, path
+        assert "verarbeitet" in resp.get_json()["error"]
+    assert client.delete(base, headers=H).status_code == 409  # cancel first
+    # Reading is still possible, and cancelling is always accepted.
+    assert client.get(f"{base}/entities").status_code == 200
+    assert client.post(f"{base}/cancel", headers=H).status_code == 200
+
+
+def test_error_view_can_return_to_the_review(tmp_path):
+    """After a problem while anonymising the user's review work is not lost."""
+    store, case = _case_under_review(tmp_path)
+    case.status, case.error = "fehler", "Der Datenträger ist voll."
+    store.save(case)
+    client = create_app(store, start_worker=False).test_client()
+    assert client.get(f"/api/cases/{case.id}").get_json()["summary"]["reviewable"] is True
+    assert client.post(f"/api/cases/{case.id}/review", headers=H).status_code == 200
+    assert store.load(case.id).status == "pruefung"
+
+
+def test_clearing_what_was_learned_removes_the_trained_model(tmp_path, client):
+    from doc_anonymizer import learning
+    from doc_anonymizer.config import custom_model_dir
+
+    learning.record(learning.Decision("Abnahme", "MANUAL", "schwaerzen", "hinzugefuegt"))
+    custom_model_dir().mkdir(parents=True)
+    (custom_model_dir() / "meta.json").write_text("{}")
+    learning.save_training_state(examples=5)
+    assert client.post("/api/learning/clear", headers=H).status_code == 200
+    assert not custom_model_dir().exists() and not learning.load()
+    assert learning.training_state().get("examples", 0) == 0
+
+
+def test_only_result_files_are_opened(tmp_path, monkeypatch):
+    """"Open" starts the default program only for the program's own results."""
+    from doc_anonymizer.errors import UserError
+
+    started = []
+    monkeypatch.setattr(web.subprocess, "Popen", lambda args, **kw: started.append(args))
+    monkeypatch.setattr(web.sys, "platform", "linux")
+    script = tmp_path / "Ergebnis.cmd"
+    script.write_text("echo")
+    with pytest.raises(UserError):
+        web._open_in_file_manager(script)
+    web._open_in_file_manager(tmp_path)
+    (tmp_path / "a_anonymisiert.pdf").write_bytes(b"%PDF-")
+    web._open_in_file_manager(tmp_path / "a_anonymisiert.pdf")
+    assert len(started) == 2

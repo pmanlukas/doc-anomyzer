@@ -18,26 +18,39 @@ from pathlib import Path
 
 def _serve(port: int, open_browser: bool) -> None:
     import secrets
+    import socket
 
+    from waitress import create_server
+
+    from .config import private_temp_dir
     from .web import create_app
 
-    # Access token: only the browser opened with this address may use the
+    # Only the loopback interface (unreachable from other computers), and
+    # exclusively: no second program can listen on the same port.
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    if sys.platform.startswith("win"):
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+    try:
+        sock.bind(("127.0.0.1", port))
+    except OSError:
+        print(f"Der Anschluss (Port) {port} ist belegt – läuft das Programm schon?\n"
+              "Sonst mit einem anderen starten:  python -m doc_anonymizer start --port 8770")
+        raise SystemExit(1) from None
+    private_temp_dir(clean=True)
+    # Access token: only a browser that was let in with a ticket may use the
     # program (protects against other users and programs on this computer).
-    token = secrets.token_urlsafe(32)
-    app = create_app(token=token)
-    url = f"http://127.0.0.1:{port}/?token={token}"
+    app = create_app(token=secrets.token_urlsafe(32))
+    new_ticket = app.extensions["anonymizer"]["new_ticket"]
+    base = f"http://127.0.0.1:{port}/"
     print("=" * 72)
     print(" Dokumenten-Anonymisierer läuft – nur auf diesem Computer.")
-    print(" Im Browser öffnen (die Adresse enthält den Zugangsschlüssel):")
-    print(f"   {url}")
+    print(" Im Browser öffnen (die Adresse gilt nur ein einziges Mal):")
+    print(f"   {base}?ticket={new_ticket(ttl=None)}")
     print(" Zum Beenden dieses Fenster schließen (oder Strg+C).")
     print("=" * 72)
     if open_browser:
-        threading.Timer(1.5, lambda: webbrowser.open(url)).start()
-    from waitress import serve
-
-    # Only the loopback interface: unreachable from other computers.
-    serve(app, host="127.0.0.1", port=port, threads=8, max_request_body_size=2 * 1024 ** 3)
+        threading.Timer(1.5, lambda: webbrowser.open(f"{base}?ticket={new_ticket()}")).start()
+    create_server(app, sockets=[sock], threads=8, max_request_body_size=2 * 1024 ** 3).run()
 
 
 def _check() -> int:
@@ -70,9 +83,12 @@ def _anonymise(files: list[Path], output: Path | None, auto: bool) -> int:
     """Batch mode without review (for tests and power users)."""
     from .config import Settings
     from .detect.pipeline import Detector
+    from .errors import friendly_message
     from .extract import analyse_document
+    from .jobs import FAILED_FOLDER, NameAnonymiser
     from .process import anonymise_document
     from .registry import CaseRegistry
+    from .verify import search_terms
 
     settings = Settings.load()
     if output:
@@ -83,12 +99,18 @@ def _anonymise(files: list[Path], output: Path | None, auto: bool) -> int:
     def progress(done: int, total: int, step: str) -> None:
         print(f"\r  {step}: {done}/{total}   ", end="", flush=True)
 
+    failed = False
     docs, detections = [], []
     for path in files:
         print(f"Analysiere {path.name}")
-        pages = analyse_document(path, settings, progress)
+        try:
+            pages = analyse_document(path, settings, progress)
+            found = detector.detect_document(pages, progress)
+        except Exception as exc:  # noqa: BLE001 - one bad file must not stop the batch
+            print(f"\n  NICHT LESBAR: {friendly_message(exc)}")
+            pages, found, failed = [], [], True
         docs.append(pages)
-        detections.append(detector.detect_document(pages, progress))
+        detections.append(found)
         print()
     registry = CaseRegistry(docs, settings)
     registry.build(detections)
@@ -96,13 +118,28 @@ def _anonymise(files: list[Path], output: Path | None, auto: bool) -> int:
     if not auto:
         for e in registry.entities.values():
             print(f"  {e.category.label_de:30} {e.replacement:18} ({e.count}x)")
-    failed = False
+    names, terms = NameAnonymiser(registry), search_terms(registry)
     for i, path in enumerate(files):
-        target = out_dir / f"{path.stem}_anonymisiert.pdf"
-        processed = anonymise_document(path, target, i, docs[i], registry, settings, progress)
-        verification = processed.verification
-        print(f"\n{target}: {'Prüfung bestanden' if verification.passed else 'PRÜFUNG FEHLGESCHLAGEN'}")
-        failed |= not verification.passed
+        if not docs[i]:
+            continue
+        # File names often contain the client's name – never taken over as it is.
+        stem = names.clean(path.stem, terms, f"Dokument_{i + 1:03d}")
+        target = out_dir / f"{stem}_anonymisiert.pdf"
+        try:
+            processed = anonymise_document(path, target, i, docs[i], registry, settings,
+                                           progress)
+        except Exception as exc:  # noqa: BLE001
+            target.unlink(missing_ok=True)
+            print(f"\n{path.name}: FEHLER – {friendly_message(exc)}")
+            failed = True
+            continue
+        passed = processed.verification.passed
+        if not passed:
+            # Must not look like a finished file.
+            (out_dir / FAILED_FOLDER).mkdir(parents=True, exist_ok=True)
+            target = target.replace(out_dir / FAILED_FOLDER / target.name)
+        print(f"\n{target}: {'Prüfung bestanden' if passed else 'PRÜFUNG FEHLGESCHLAGEN'}")
+        failed |= not passed
     return 1 if failed else 0
 
 

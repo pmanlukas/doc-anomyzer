@@ -37,3 +37,26 @@ def test_no_false_positives():
     found = names("Sehr geehrte Frau Kollegin, dem Zeugen Glauben schenken. "
                   "Die Klägerin Anspruch. Mit freundlichen Grüßen")
     assert found == set()
+
+
+def test_name_in_address_block_does_not_run_into_the_street():
+    """"Frau / Grit Herrmann / Pärtzeltring 517": the street is no surname –
+    and the first name must not be lost because of it."""
+    from doc_anonymizer.config import Settings
+    from doc_anonymizer.detect.pipeline import Detector
+    from doc_anonymizer.models import PageInfo, Word
+    from doc_anonymizer.registry import CaseRegistry
+
+    lines = ["Frau", "Grit Herrmann", "Pärtzeltring 517", "91531 Ribnitz-Damgarten", "",
+             "Sehr geehrte Frau Herrmann,", "hiermit kündigen wir das Arbeitsverhältnis."]
+    words = [Word(40 + 60 * n, 100 + 20 * i, 95 + 60 * n, 112 + 20 * i, text, "text", i)
+             for i, line in enumerate(lines) for n, text in enumerate(line.split())]
+    pages = [PageInfo(0, 595, 842, words)]
+    settings = Settings(use_gliner=False)
+    registry = CaseRegistry([pages], settings)
+    registry.build([Detector(settings).detect_document(pages)])
+    redacted = {words[i].text.strip(",") for m in registry.mentions for i in m.word_indices
+                if registry.entities[m.entity_id].enabled}
+    assert {"Grit", "Herrmann", "Pärtzeltring"} <= redacted
+    person = next(e for e in registry.entities.values() if e.surname == "Herrmann")
+    assert person.given == ["Grit"] and person.replacement == "G. H."

@@ -247,6 +247,12 @@ RULES: list[Rule] = [
          _r(rf"(?<![\d./§])(?:D-)?\d{{5}} {UP}[\p{{L}}\-]+(?:(?: (?:am|an der|im|in der|ob der|"
             rf"bei|vor der)) {UP}[\p{{L}}]+| \({UP}[\p{{L}} .]+\)| {UP}[\p{{L}}\-]+(?=\n))?"),
          priority=92),
+    Rule("postcode_city_wrapped", Category.ADDRESS,
+         # The line ends between postcode and place: "… Weg 3, 06098" / "Wurzen."
+         # Only right after a comma (end of the street part) – a five-digit
+         # number at the end of any line is not a postcode.
+         _r(rf"(?<=,[ ])(?:D-)?\d{{5}}\n{UP}[\p{{L}}\-]+"),
+         priority=92),
     Rule("street_name", Category.ADDRESS,
          # Street name without (readable) house number: "im Hause Tschentschergasse".
          _r(rf"\b{UP}[\p{{L}}\-]{{2,}}(?:straße|strasse|gasse|allee|chaussee|promenade)\b"),
@@ -395,6 +401,7 @@ _EXTRA_VALIDATORS: dict[str, Callable[[str], bool]] = {
     "street": _street_ok,
     "street_prep": _street_ok,
     "postcode_city": _postcode_ok,
+    "postcode_city_wrapped": _postcode_ok,
     "url": _url_ok,
     "domain": _url_ok,
     "org_legal_form": _org_ok,

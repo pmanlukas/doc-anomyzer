@@ -52,15 +52,23 @@ jobs:
       - name: Setup testen (installieren, prüfen, anonymisieren, deinstallieren)
         run: ./installer/test_setup.ps1
 
+      - name: Größe und Prüfsumme
+        run: |
+          $setup = Get-Item dist/Dokumenten-Anonymisierer-Setup.exe
+          $hash = (Get-FileHash $setup.FullName -Algorithm SHA256).Hash.ToLower()
+          "### Dokumenten-Anonymisierer-Setup.exe`n`n* Größe: $([math]::Round($setup.Length / 1MB)) MB`n* SHA-256: ``$hash``" |
+            Add-Content $env:GITHUB_STEP_SUMMARY
+
       - name: Setup.exe als Artefakt hochladen
         uses: actions/upload-artifact@v4
         with:
           name: Dokumenten-Anonymisierer-Setup
           path: |
             dist/Dokumenten-Anonymisierer-Setup.exe
+            dist/Dokumenten-Anonymisierer-Setup.exe.sha256
             ANLEITUNG.txt
           compression-level: 0
-          retention-days: 30
+          retention-days: 90
 
       - name: Protokolle bei Fehlern
         if: failure()

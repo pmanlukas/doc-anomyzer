@@ -291,13 +291,43 @@ class CaseRegistry:
                     if det.source in learning.WEAK_SOURCES and normalise(det.text) in keep:
                         continue  # the user said twice: this is no personal data
                     words = ptext.words_for_span(det.start, det.end)
-                    if not words or taken.intersection(words):
+                    if words and taken.intersection(words):
+                        det, words = self._trim_person(ptext, det, words, taken)
+                    if not words:
                         continue
                     taken.update(words)
                     accepted.append((d, p, det, words))
         # Stable order of first appearance (document, page, position).
         accepted.sort(key=lambda x: (x[0], x[1], x[2].start))
         return accepted
+
+    @staticmethod
+    def _trim_person(ptext: PageText, det: Detection, words: list[int],
+                     taken: set[int]) -> tuple[Detection, list[int]]:
+        """A name that overlaps a more reliable finding keeps its free part.
+
+        In an address block the name rule may run on into the next line
+        ("Grit Herrmann" + "Pärtzeltring", a street the address rule claims).
+        Dropping the whole finding would leave the first name readable –
+        instead the name is cut back to the words nobody else claimed.
+        Returns ``(det, [])`` if nothing usable remains.
+        """
+        free = [w for w in words if w not in taken]
+        if det.category is not Category.PERSON or not free:
+            return det, []
+        if words[:len(free)] != free and words[-len(free):] != free:
+            return det, []  # overlap in the middle: no clean remainder
+        start, end = ptext.word_span(free[0])[0], ptext.word_span(free[-1])[1]
+        names = [w.strip(_PUNCT) for w in ptext.text[start:end].split()]
+        names = [w for w in names if w]
+        if not names or not all(w[:1].isupper() or w.casefold() in PARTICLES for w in names) \
+                or all(is_stopword(w) for w in names):
+            return det, []
+        given, surname = split_name(names)
+        trimmed = Detection(det.page, start, end, ptext.text[start:end], det.category,
+                            det.source, det.score, {**det.meta, "given": given,
+                                                    "surname": surname})
+        return trimmed, free
 
     def _build_persons(self, persons) -> None:
         full: dict[tuple[str, str], Entity] = {}

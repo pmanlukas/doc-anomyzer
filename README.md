@@ -17,6 +17,10 @@ oder z. B. von einem KI-Sprachmodell analysiert werden.
   **Prüfbericht** dokumentiert das Ergebnis.
 * Unsichere Stellen legt das Programm dem Nutzer zur Entscheidung vor und
   **lernt aus diesen Entscheidungen**.
+* **Was man sieht, ist was man bekommt:** Ins Ergebnis kommt nur, was auf
+  den Seiten sichtbar ist – versteckter Text (unter Balken, weiß,
+  unsichtbar, außerhalb der Seite), Kameradaten von Fotos (EXIF/GPS) und
+  abgeschnittene Bildteile werden nicht übernommen.
 * Es werden **keine Daten ins Internet** gesendet – auch nicht an KI-Dienste.
 
 ---
@@ -39,29 +43,39 @@ Eigenschaften des Setups:
   enthalten; bei der Installation wird nichts heruntergeladen,
 * **ohne Administratorrechte** – Programmordner
   `%LOCALAPPDATA%\Programs\Dokumenten-Anonymisierer`, keine UAC-Abfrage,
-* **kein Konsolenfenster** – das Programm öffnet direkt den Browser; ein
-  zweiter Klick auf das Symbol öffnet nur den Browser erneut,
-* **Beenden** über die Schaltfläche „Beenden“ oben rechts – oder gar nicht:
-  ist einige Minuten keine Programmseite im Browser geöffnet und läuft keine
-  Verarbeitung, beendet sich das Programm selbst. Schläft der Browser-Tab
-  ein, zeigt die Seite beim Zurückkehren einen Hinweis und verbindet sich
-  nach dem Neustart über das Symbol von selbst wieder,
+* **eigenes Programmfenster, kein Konsolenfenster** – das Programm öffnet
+  sich wie eine normale Anwendung (Microsoft Edge im App-Modus, ohne
+  Adressleiste und Tabs, mit einem eigenen, abgeschotteten Profil). Ohne
+  Edge öffnet es sich als Tab im Standardbrowser. Ein zweiter Klick auf das
+  Symbol holt nur das Fenster wieder hervor,
+* **Beenden = Fenster schließen** – das Programm beendet sich kurz danach
+  selbst, nie während einer laufenden Verarbeitung (alternativ: „Beenden“
+  oben rechts),
 * Startprobleme erscheinen als verständliche Windows-Meldung; Details stehen
-  in `%LOCALAPPDATA%\DocAnonymizer\logs\programm.log`,
+  in `%LOCALAPPDATA%\DocAnonymizer\logs\programm.log` (ohne Inhalte und
+  ohne Dateinamen der Dokumente),
 * **Update** = neue Setup.exe ausführen (ein laufendes Programm wird vorher
   beendet). **Deinstallation** über „Apps & Features“.
 
-Nutzerdaten liegen **getrennt** vom Programm und bleiben bei Update und
-Deinstallation erhalten: Akten, Einstellungen, Lernstand und das
-nachtrainierte Sprachmodell in `%LOCALAPPDATA%\DocAnonymizer`, die
-Ergebnisse in `%USERPROFILE%\Anonymisiert`.
+Nutzerdaten liegen **getrennt** vom Programm und bleiben bei einem Update
+erhalten: Akten (Arbeitskopien der Originale), Einstellungen, Lernstand und
+das nachtrainierte Sprachmodell in `%LOCALAPPDATA%\DocAnonymizer`, die
+Ergebnisse in `%USERPROFILE%\Anonymisiert` (änderbar). Beim Deinstallieren
+fragt das Programm, ob die Arbeitsdaten mit gelöscht werden sollen; die
+Ergebnisse bleiben in jedem Fall erhalten.
 
 Die Setup.exe wird von GitHub Actions gebaut und auf einem frischen Windows
 getestet (`.github/workflows/windows-setup.yml`, `installer/`): stille
 Installation, Selbsttest, Anonymisierung von Test-PDFs über die Kommandozeile
-und über das laufende Programm, Zweitstart, Beenden, selbstständiges Beenden,
-Update bei laufendem Programm, Deinstallation. Download: Actions → Lauf
-„Windows-Setup“ → Artefakt „Dokumenten-Anonymisierer-Setup“.
+und über das laufende Programm (inkl. Prüfung, dass ohne Zugangsschlüssel
+nichts erreichbar ist), Zweitstart, Beenden, selbstständiges Beenden, das
+echte Programmfenster in Edge, Update bei laufendem Programm, Deinstallation.
+Alle Bausteine, die in das Setup wandern, werden beim Bau gegen feste
+SHA-256-Prüfsummen bzw. die Windows-Signatur des Herstellers geprüft; die
+enthaltenen Paketversionen stehen in `enthaltene_pakete.txt` im
+Programmordner. Download: Actions → Lauf „Windows-Setup“ → Artefakt
+„Dokumenten-Anonymisierer-Setup“ (enthält auch die SHA-256-Prüfsumme der
+Setup.exe zum Vergleichen: `Get-FileHash Dokumenten-Anonymisierer-Setup.exe`).
 
 **Alternative: ZIP + `Installieren.bat`** (lädt Python, Tesseract und das
 Sprachmodell bei der Installation aus dem Internet; ZIP erzeugen mit
@@ -77,41 +91,59 @@ Sprachmodell bei der Installation aus dem Internet; ZIP erzeugen mit
 ## 2. Bedienung
 
 1. **Start:** Doppelklick auf „Dokumenten-Anonymisierer“ (Desktop oder
-   Startmenü). Der Browser öffnet sich mit der Oberfläche. Der Browser dient
-   nur als Anzeige – das Programm ist ausschließlich auf diesem Computer
-   erreichbar (`127.0.0.1`).
-2. **Dokumente ablegen:** PDF-Dateien **oder einen ganzen Ordner** auf die
-   Startseite ziehen (oder „Dateien auswählen“ / „Ordner auswählen“). Die
-   Analyse startet sofort. Alles, was gemeinsam abgelegt wird, ist eine
-   „Akte“: Dieselbe Person erhält in allen Dokumenten dieselben Initialen.
-   Auch hunderte Dokumente sind kein Problem (siehe Abschnitt 8).
+   Startmenü). Das Programmfenster öffnet sich. Es dient nur als Anzeige –
+   das Programm ist ausschließlich auf diesem Computer erreichbar
+   (`127.0.0.1`) und nur für das Fenster, das es selbst geöffnet hat.
+2. **Dokumente ablegen:** PDF-Dateien **oder einen ganzen Ordner** in das
+   Fenster ziehen (oder „Dateien auswählen“ / „Ordner auswählen“). Das Lesen
+   startet sofort und lässt sich jederzeit **abbrechen**. Alles, was
+   gemeinsam abgelegt wird, ist eine „Akte“: Dieselbe Person erhält in allen
+   Dokumenten dieselben Initialen. Auch hunderte Dokumente sind kein Problem
+   (siehe Abschnitt 8). Ein defektes oder passwortgeschütztes PDF hält die
+   übrigen nicht auf – es wird am Ende mit dem Grund aufgeführt.
 3. **Prüfen:**
-   * Oben stehen nur die Punkte, bei denen sich das Programm **nicht sicher**
-     ist (z. B. nur vom Sprachmodell erkannte Wörter, schlecht lesbare
-     Scan-Seiten). Jeweils „schwärzen“ / „nicht schwärzen“ wählen – oder mit
-     **„Alle Vorschläge übernehmen“** in einem Schritt abschließen.
-   * Darunter alle gefundenen Daten mit ihrer Ersetzung. Haken entfernen =
-     nicht schwärzen. Ersetzungen lassen sich direkt ändern.
+   * **Offene Fragen:** nur die Stellen, bei denen sich das Programm **nicht
+     sicher** ist – mit Textzusammenhang und einem Vorschlag. Jeweils
+     „Schwärzen“ / „Lesbar lassen“ wählen oder alle Vorschläge übernehmen.
+   * **Alle Funde:** alle gefundenen Daten mit ihrer Ersetzung. Schalter aus
+     = nicht schwärzen. Ersetzungen lassen sich direkt ändern.
+   * **Bereiche:** automatisch erkannte Unterschriften, Stempel, Logos.
    * Fehlt etwas: „Begriff hinzufügen“ oder auf der Seitenansicht **mit der
      Maus einen Rahmen ziehen**.
-4. **Anonymisieren:** „Jetzt endgültig anonymisieren“. Ergebnis je Dokument:
+4. **Anonymisieren und speichern:** ein Klick (der Speicherort steht daneben
+   und lässt sich dort ändern). Ergebnis je Dokument:
    * `…_anonymisiert.pdf` – das anonymisierte Dokument,
    * `…_anonymisiert.txt` – Textfassung in Lesereihenfolge (ideal zum
      Einfügen in KI-Werkzeuge),
-   * `…_Pruefbericht.html` – Prüfbericht (enthält keine Originaldaten),
-   * `VERTRAULICH_nicht_weitergeben\Zuordnungstabelle.html` – Original →
-     Ersetzung. **Hebt die Anonymisierung auf, niemals weitergeben.**
+   * `…_Pruefbericht.html` – Prüfbericht (enthält keine Originaldaten).
 
-   Die Ergebnisseite zeigt eine Tabelle aller Dokumente (Problemfälle
-   zuerst), „Alle als ZIP“ lädt alle Ergebnisse auf einmal herunter (ohne die
-   vertrauliche Zuordnungstabelle).
+   **Wo liegt was?** (`<Speicherort>` ist anfangs `C:\Users\<Name>\Anonymisiert`)
 
-   Standard-Ergebnisordner ist `C:\Users\<Name>\Anonymisiert` – bewusst nicht
-   „Dokumente“ oder „Desktop“, weil diese oft per OneDrive in die Cloud
-   synchronisiert werden. Das Programm warnt, wenn ein Cloud-Ordner gewählt wird.
-5. **Nachkontrolle:** Meldet Prüfstufe 4 noch Auffälligkeiten, kann man sie
-   unter „Details“ direkt „schwärzen“ oder als „kein Personenbezug“ markieren
-   und neu anonymisieren.
+   ```
+   <Speicherort>\<Datum Akte>\            nur geprüfte, bestandene Ergebnisse –
+                                          der Ordner kann als Ganzes weitergegeben werden
+   <Speicherort>\VERTRAULICH_nicht_weitergeben\<Datum Akte>\
+       Zuordnungstabelle.html             Original → Ersetzung (hebt die Anonymisierung auf!)
+       NICHT BESTANDEN - nicht weitergeben\   Ergebnisse, die eine Prüfung nicht bestanden haben
+   ```
+
+   Ein Dokument wird zunächst im privaten Arbeitsordner erzeugt und erst
+   nach bestandener Prüfung in den Ergebnisordner gelegt. Dateinamen werden
+   mit anonymisiert (`Klage Mustermann.pdf` → `Klage M_anonymisiert.pdf`);
+   lässt sich ein Name im Dateinamen nicht sicher entfernen, heißt die Datei
+   neutral `Dokument_003_anonymisiert.pdf`.
+
+   Die Ergebnisseite zeigt alle Dokumente (Problemfälle zuerst), „Ordner
+   öffnen“ führt direkt zu den Dateien, „Alle als ZIP“ lädt alle bestandenen
+   Ergebnisse auf einmal herunter.
+
+   Der Standard-Speicherort ist bewusst nicht „Dokumente“ oder „Desktop“,
+   weil diese oft per OneDrive in die Cloud synchronisiert werden. Das
+   Programm warnt, wenn ein Cloud-Ordner gewählt wird.
+5. **Nachbessern:** Meldet die Nachkontrolle noch Auffälligkeiten oder fällt
+   Ihnen selbst etwas auf, führt „Nachbessern“ zurück in die Prüfung. Beim
+   erneuten Anonymisieren werden die bisherigen Ergebnisdateien der Akte
+   **ersetzt** – es bleibt kein veralteter Stand liegen.
 
 **Selbst nachprüfen:** Anonymisiertes PDF öffnen, `Strg+F`, einen der Namen
 suchen – er darf nicht gefunden werden.
@@ -178,8 +210,22 @@ Mehrere voneinander unabhängige Verfahren werden kombiniert:
 * **Scans** (und auf Wunsch *alle* Seiten, Einstellung „Maximale Sicherheit“)
   werden nach dem Schwärzen als neues Bild gerendert; die durchsuchbare
   Textebene wird ausschließlich aus dem bereits anonymisierten Text erzeugt.
-* Versteckter Text (weiß, unsichtbar, außerhalb der Seite) wird erkannt und
-  entfernt bzw. die Seite als Bild neu aufgebaut.
+* **Nur Sichtbares wird übernommen.** Jede Seite wird zweimal gerendert –
+  mit und ohne Text. Wo das Entfernen eines Wortes keinen Bildpunkt ändert,
+  war das Wort nicht sichtbar: unter einem schwarzen Balken (die klassische
+  „Schwärzung“ per Rechteck), in weißer oder unsichtbarer Schrift,
+  weggeschnitten oder außerhalb der Seite. Solche Wörter fließen in die
+  Erkennung ein, gelangen aber nie in das Ergebnis (weder in die Textebene
+  noch in die `.txt`); die Seite wird als Bild neu aufgebaut. Eine fremde,
+  unsichtbare Textebene kann auch nicht verdecken, was das Seitenbild zeigt –
+  es zählt, was die eigene Texterkennung sieht.
+* **Keine Original-Bilddaten.** Jede Seite, die nach dem Schwärzen noch ein
+  Bild enthält, wird aus ihrer Darstellung neu aufgebaut. Kameradaten in
+  Fotos (EXIF: Aufnahmeort, Gerät, Besitzer, Zeitpunkt, Vorschaubild),
+  XMP-Daten an Bildern und abgeschnittene oder außerhalb der Seite liegende
+  Bildteile sind danach nicht mehr vorhanden.
+* **Gedrehter Text** (senkrechte Randzeilen von Briefbögen und
+  Gehaltsabrechnungen) wird über seine ganze Länge entfernt.
 
 ## 6. Die vier Prüfstufen
 
@@ -187,10 +233,12 @@ Mehrere voneinander unabhängige Verfahren werden kombiniert:
 |---|---|---|
 | 1 – Textprüfung | Alle Originalbegriffe (inkl. jedes einzelnen Namensteils, Zahlen OCR-tolerant: „DEO2“ = „DE02“) im gesamten Text der fertigen Datei inkl. unsichtbarem Text, im Dateinamen und in der Textfassung; **Reste von IBANs**, auch wenn die Erkennung sie nicht kannte (z. B. „DE02 1203“ neben einer Schwärzung); Dateistruktur (Metadaten, Anhänge …) | automatische Nachschwärzung, erneute Prüfung |
 | 2 – Bildprüfung | Jede fertige Seite wird als Bild gerendert und per OCR gelesen – geprüft wird, was ein Mensch oder eine KI tatsächlich *sieht* | automatische Nachschwärzung genau dieser Stellen, erneute Prüfung |
-| 3 – Wiederherstellungsversuche | Ein „Angreifer“ versucht die Daten zurückzuholen: Suche in allen PDF-Rohobjekten und entpackten Datenströmen (auch UTF-16/Hex), Textauslesen mit unabhängigen Programmen (pypdf, pdfminer, pdftotext), OCR aller eingebetteten Bilder in Originalauflösung (auch abgeschnittene/unsichtbare Bildteile), Abgleich der Dokumentkennung | betroffene Seite wird komplett als Bild neu aufgebaut, erneute Prüfung |
+| 3 – Wiederherstellungsversuche | Ein „Angreifer“ versucht die Daten zurückzuholen: Suche in allen PDF-Rohobjekten und entpackten Datenströmen (auch UTF-16/Hex), Textauslesen mit unabhängigen Programmen (pypdf, pdfminer, pdftotext), Suche nach verdecktem/unsichtbarem Text und nach Original-Bilddaten im Ergebnis, Abgleich der Dokumentkennung | betroffene Seite wird komplett als Bild neu aufgebaut, erneute Prüfung |
 | 4 – Nachkontrolle | Erkennung läuft erneut über das Ergebnis | Hinweise zur Entscheidung durch den Nutzer |
 
 Erst wenn Stufe 1 bis 3 nichts mehr finden, gilt die Prüfung als bestanden.
+Eine Prüfstufe, die nicht ausgeführt werden konnte (abgeschaltet, technisches
+Problem), wird als **„nicht ausgeführt“** ausgewiesen – nie als bestanden.
 
 **Getestete Angriffe** (`tests/test_recovery.py`): Name versteckt als
 ActualText in getaggten PDFs (Word), in abgeschnittenen Bildteilen, als weißer,
@@ -200,6 +248,14 @@ Formularfeldern, Links, Metadaten, XMP, Lesezeichen, Dateianhängen,
 Seitenbeschriftungen, ausgeblendeten Ebenen, JavaScript und in alten
 Dateiversionen. Bei keinem Fall lässt sich der Name aus dem Ergebnis
 wiederherstellen.
+
+**Versteckte Inhalte, die keine Erkennung kennen kann**
+(`tests/test_hidden_content.py`, mit einem frei erfundenen Wort): Text unter
+einem schwarzen Balken, in weißer und in unsichtbarer Schrift, außerhalb der
+Seite, Kameradaten (EXIF) in einem großen und einem kleinen Foto, der
+abgeschnittene Teil eines Bildschirmfotos, eine irreführende unsichtbare
+Textebene über einem Bild mit Namen, senkrecht geschriebener Name. Nichts
+davon ist im Ergebnis auffindbar – weder in der Datei noch in der Textfassung.
 
 **Bekannte Restinformation:** Die *Breite* einer Schwärzung entspricht der
 Länge des Originals (wie bei jeder Schwärzung auf Papier). Aus „M. M.“ und
@@ -301,12 +357,66 @@ Durchrutschen.
   Bereiche“); bitte Unterschriften kurz kontrollieren und Fehlendes mit der
   Maus einrahmen. Handschriftliche Randnotizen ohne Grußformel werden nur
   bei farbiger Tinte zuverlässig erkannt.
+* **Seiten mit Bildern werden zu Bildseiten:** Enthält eine Seite nach dem
+  Schwärzen noch ein Bild (Foto, Briefbogen als Hintergrundbild, behaltenes
+  Logo), wird sie als Bild neu aufgebaut (200 dpi, mit durchsuchbarer
+  Textebene). Das ist der Preis dafür, dass keine Original-Bilddaten in das
+  Ergebnis gelangen; reine Textseiten bleiben gestochen scharfer Text.
+* **Sehr kurze Namen** (zwei Buchstaben, z. B. „Li“) werden als Teil des
+  vollen Namens geschwärzt, von der Prüfung aber nicht einzeln gesucht (zu
+  viele Fehltreffer) – bei solchen Namen bitte selbst kurz hinsehen.
 * **Indirekte Identifizierbarkeit** (z. B. „der einzige Kinderarzt im Ort“,
   seltene Berufe, Diagnosen) kann ein Programm nicht sicher beurteilen.
 * Eine automatische Anonymisierung ersetzt nicht die abschließende
   Verantwortung des Anwenders.
 
-## 10. Für Entwickler
+## 10. Schutz des Programms und der Daten auf dem Rechner
+
+Die Oberfläche läuft technisch als lokaler Webserver – deshalb ist sie
+besonders abgesichert:
+
+* **Nur dieser Computer:** Der Server lauscht ausschließlich auf `127.0.0.1`
+  (exklusiv gebundener Port), andere Rechner im Netz erreichen ihn nicht.
+* **Nur dieser Benutzer, nur dieses Fenster:** Bei jedem Start entsteht ein
+  zufälliger Zugangsschlüssel. Ohne ihn ist nichts erreichbar – auch nicht
+  für andere Benutzerkonten auf demselben Rechner (Terminalserver) oder für
+  andere Programme. Das Fenster wird mit einem **Einmal-Ticket** eingelassen;
+  der Schlüssel selbst steht nie in einer Adresse, einer Befehlszeile oder
+  im Browserverlauf. Ein zweiter Start erkennt die eigene Instanz per
+  Challenge/Response – ein fremdes Programm auf demselben Port bekommt den
+  Schlüssel nicht.
+* **Abgeschottetes Fenster:** Das Programmfenster nutzt ein eigenes
+  Edge-Profil im Datenordner des Programms: keine Browser-Erweiterungen
+  (Übersetzer, „KI-Assistenten“ …), keine Synchronisation, und ein
+  Cookie-Speicher, den keine andere Webseite je sieht.
+* **Keine fremden Webseiten:** Anfragen anderer Seiten werden abgewiesen
+  (Prüfung von `Host`, `Origin`, `Sec-Fetch-Site`, eigener Anfrage-Header),
+  die Seiten lassen sich nicht einbetten, und eine strenge
+  Content-Security-Policy erlaubt weder Inline-Skripte noch externe Inhalte.
+* **Feindliche Dateien:** Übergroße Seiten und Bilder werden begrenzt,
+  Dokumente mit mehr als 5 000 Seiten abgelehnt, die Texterkennung hat ein
+  Zeitlimit. Dokumente werden in getrennten Arbeitsprozessen verarbeitet –
+  stürzt einer ab, betrifft das nur sein Dokument. Hochgeladene Dateien
+  werden unter neutralen Namen gespeichert.
+* **Ordnung auf der Platte:** Arbeitskopien der Originale liegen nur im
+  privaten Datenordner und werden nach einstellbarer Frist (Standard: 30 Tage
+  nach der letzten Bearbeitung) automatisch gelöscht. Temporäre Dateien
+  (Seitenbilder für die Texterkennung) liegen in einem eigenen privaten
+  Ordner, der bei jedem Start und Ende geleert wird. Die Lerndaten (Begriff
+  und wenige Wörter Zusammenhang) bleiben bis „Gelerntes löschen“.
+* **Während der Verarbeitung** ist die Prüfung gesperrt: Anonymisiert wird
+  genau der Stand, den man beim Klick gesehen hat.
+
+**Bekannte Grenzen:** Wird das Programm nicht im eigenen Fenster, sondern als
+Tab im Standardbrowser benutzt (Edge fehlt oder die Einstellung wurde
+geändert), teilt es sich dessen Cookie-Speicher und Erweiterungen – auf
+gemeinsam genutzten Rechnern bitte das eigene Fenster verwenden. Vor einem
+Benutzer mit Administratorrechten oder Schadsoftware im eigenen
+Benutzerkonto kann kein lokales Programm schützen. Die Setup.exe ist nicht
+code-signiert (SmartScreen-Hinweis bei der Installation).
+
+## 11. Für Entwickler
+
 
 ```bash
 python -m venv .venv && . .venv/bin/activate

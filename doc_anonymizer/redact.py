@@ -12,6 +12,12 @@ Why the result cannot be restored:
 * **Raster pages** – scanned pages (and, in "maximum security" mode, all
   pages) are rendered to a new image after redaction. Their text layer is
   re-created exclusively from the already anonymised word list.
+* **What you see is what you get** – only what is *visible* on the page is
+  carried over. Text that is in the file but hidden (under a bar, in white,
+  outside the page) is dropped, and no original image data survives: every
+  page that still contains an image is re-built from its rendering, so
+  camera data (EXIF/GPS), cropped-away image parts and embedded previews
+  are gone.
 """
 
 from __future__ import annotations
@@ -27,7 +33,7 @@ import pymupdf
 
 from .config import Settings
 from .extract import effective_dpi, open_pdf
-from .models import ManualBox, PageInfo, Word
+from .models import ON_IMAGE, SLANTED, VERTICAL, ManualBox, PageInfo, Word
 from .registry import CaseRegistry
 from .textmap import PageText
 
@@ -49,6 +55,11 @@ class Box:
     rect: pymupdf.Rect
     text: str = ""
     from_ocr: bool = False
+    #: 0 = horizontal text, :data:`VERTICAL` or :data:`SLANTED`
+    direction: int = 0
+    #: ``False``: the text is removed, but no box is drawn – used for text
+    #: nobody can see anyway (e.g. under a black bar somebody else drew).
+    draw: bool = True
 
 
 @dataclass
@@ -116,12 +127,26 @@ def plan_page(registry: CaseRegistry, doc_index: int, page: PageInfo,
         for word in words:
             lines.setdefault(word.line_id, []).append(word)
         text = registry.replacement_for(mention)
-        for n, line_words in enumerate(lines.values()):
+        labelled = False
+        for line_words in lines.values():
             rect = _union(line_words)
-            plan.boxes.append(Box(rect, text if n == 0 else "",
-                                  any(w.source == "ocr" for w in line_words)))
-            if n == 0:
-                replacement_at[mention.word_indices[0]] = (rect, text)
+            # Hidden text is removed without a visible mark – except on
+            # images (text layer of a scan): there the image may show the
+            # name at this place, so it is covered.
+            draw = not all(w.hidden for w in line_words) or \
+                any(w.flags & ON_IMAGE for w in line_words)
+            flags = 0
+            for word in line_words:
+                flags |= word.flags
+            direction = SLANTED if flags & SLANTED else (flags & VERTICAL)
+            plan.boxes.append(Box(rect, text if draw and not labelled else "",
+                                  any(w.source == "ocr" for w in line_words),
+                                  direction, draw))
+            if draw and not labelled:
+                labelled = True
+                first = next(i for i in mention.word_indices
+                             if page.words[i].line_id == line_words[0].line_id)
+                replacement_at[first] = (rect, text)
     for box in manual:
         mrect = pymupdf.Rect(box.x0, box.y0, box.x1, box.y1)
         plan.boxes.append(Box(mrect, box.label, True))
@@ -139,7 +164,8 @@ def plan_page(registry: CaseRegistry, doc_index: int, page: PageInfo,
         if idx in replacement_at:
             rect, text = replacement_at[idx]
             plan.segments.append(Segment(rect, text, word.line_id))
-        elif idx not in redacted:
+        elif idx not in redacted and not word.hidden:
+            # (Hidden words are never part of the result.)
             plan.segments.append(Segment(pymupdf.Rect(word.x0, word.y0, word.x1, word.y1),
                                          word.text, word.line_id))
     return plan
@@ -148,14 +174,21 @@ def plan_page(registry: CaseRegistry, doc_index: int, page: PageInfo,
 def _removal_rect(box: Box) -> pymupdf.Rect:
     """Area handed to MuPDF for removing text and image pixels.
 
-    For text-layer words the box is shrunk vertically: character boxes of the
-    neighbouring lines often overlap the word box, and MuPDF removes every
-    character that touches the redaction area. OCR boxes (image areas) are
-    slightly *enlarged* instead so no pixel of the letters survives.
+    For text-layer words the box is shrunk *across* the writing direction:
+    character boxes of the neighbouring lines often overlap the word box, and
+    MuPDF removes every character that touches the redaction area. Along the
+    writing direction the box keeps its full length – otherwise the first and
+    last letters of a vertically written name would survive. OCR boxes (image
+    areas) are slightly *enlarged* instead so no pixel of the letters survives.
     """
     r = pymupdf.Rect(box.rect)
     if box.from_ocr:
         return r + (-1.5, -1.5, 1.5, 1.5)
+    if box.direction == SLANTED:
+        return r  # no safe way to shrink: remove everything the box touches
+    if box.direction == VERTICAL:
+        w = r.width
+        return pymupdf.Rect(r.x0 + 0.28 * w, r.y0 + 0.3, r.x1 - 0.28 * w, r.y1 - 0.3)
     h = r.height
     return pymupdf.Rect(r.x0 + 0.3, r.y0 + 0.28 * h, r.x1 - 0.3, r.y1 - 0.28 * h)
 
@@ -181,6 +214,15 @@ def _draw_box(page: pymupdf.Page, box: Box) -> None:
         max_size, baseline_y = rect.height * 0.72, rect.y0 + rect.height * 0.78
     page.draw_rect(rect, color=None, fill=FILL, overlay=True)
     if not box.text:
+        return
+    if box.direction == VERTICAL and not box.from_ocr and rect.height > rect.width:
+        # Label written along the box (bottom to top), like the original.
+        unit = pymupdf.get_text_length(box.text, fontname=FONT, fontsize=1) or 1
+        size = max(2.5, min(rect.width * 0.72, (rect.height - 1) / unit))
+        baseline = pymupdf.Point(rect.x0 + rect.width * 0.78, rect.y1 - 0.5)
+        page.insert_text(baseline * page.rotation_matrix if page.rotation else baseline,
+                         box.text, fontsize=size, fontname=FONT, color=TEXT_COLOR,
+                         rotate=(page.rotation + 90) % 360)
         return
     size = _fit_fontsize(box.text, rect, max_size)
     baseline = pymupdf.Point(rect.x0 + 0.5, baseline_y)
@@ -302,13 +344,17 @@ def redact_document(source: Path, target: Path, doc_index: int, pages: list[Page
     for info, plan in zip(pages, plans):
         page = src[info.index]
         for box in plan.boxes:
-            _draw_box(page, box)
+            if box.draw:
+                _draw_box(page, box)
 
     # 4) Build a brand-new PDF from the cleaned pages.
     out = pymupdf.open()
     for info, plan in zip(pages, plans):
         page = src[info.index]
-        raster = info.force_raster or settings.security_mode == "maximum"
+        # A page that still contains an image is always re-built: original
+        # image data may carry camera data (EXIF/GPS), cropped-away parts or
+        # an embedded preview – none of it visible, all of it extractable.
+        raster = info.force_raster or settings.security_mode == "maximum" or _has_images(page)
         if not raster:
             out.insert_pdf(src, from_page=info.index, to_page=info.index,
                            links=False, annots=False, widgets=False)
@@ -319,6 +365,7 @@ def redact_document(source: Path, target: Path, doc_index: int, pages: list[Page
         if progress:
             progress(info.index + 1, len(pages), "Neues PDF erzeugen")
 
+    _strip_private_data(out)
     result.texts = [plan.plain_text() for plan in plans]
     # Re-subset embedded fonts: they would otherwise still contain the glyphs
     # of removed characters (revealing e.g. that an "ł" occurred somewhere).
@@ -333,6 +380,31 @@ def redact_document(source: Path, target: Path, doc_index: int, pages: list[Page
     out.close()
     src.close()
     return result
+
+
+def _has_images(page: pymupdf.Page) -> bool:
+    """Does the page (or anything it uses) still contain an image?"""
+    try:
+        return bool(page.get_images(full=True)) or bool(page.get_image_info())
+    except Exception:  # noqa: BLE001 - cannot tell: re-build to be safe
+        return True
+
+
+#: Dictionary entries that carry data of the producing program or of the
+#: original file (XMP packets, private application data, time stamps).
+_PRIVATE_KEYS = ("Metadata", "PieceInfo", "LastModified")
+
+
+def _strip_private_data(doc: pymupdf.Document) -> None:
+    """Remove metadata attached to single objects (pages, fonts, graphics)."""
+    for xref in range(1, doc.xref_length()):
+        try:
+            keys = doc.xref_get_keys(xref)
+        except Exception:  # noqa: BLE001 - not a dictionary
+            continue
+        for key in _PRIVATE_KEYS:
+            if key in keys:
+                doc.xref_set_key(xref, key, "null")
 
 
 _BDC_WITH_PROPERTIES = re.compile(rb"/([A-Za-z0-9_.\-]+)\s*<<(?:(?!>>).)*?>>\s*BDC", re.S)
@@ -358,7 +430,10 @@ def _rebuild_as_image(out: pymupdf.Document, page: pymupdf.Page, plan: PagePlan,
                       settings: Settings) -> None:
     """Replace a page by an image of itself plus a clean, invisible text layer."""
     zoom = effective_dpi(page, settings.raster_dpi) / 72
-    pix = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom), alpha=False)
+    # Without annotations: visible ones were turned into page content when the
+    # file was opened (and thus read and redacted); anything still attached
+    # as an annotation has not been checked and must not get into the image.
+    pix = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom), alpha=False, annots=False)
     new = out.new_page(width=page.rect.width, height=page.rect.height)
     # JPEG keeps hundreds of pages small; quality 80 is easily readable.
     new.insert_image(new.rect, stream=pix.tobytes("jpeg", jpg_quality=80))

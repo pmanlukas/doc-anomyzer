@@ -20,6 +20,14 @@ class WorkerCrashed(UserError):
             "Grenzen gestoßen (z. B. extrem große Seiten oder zu wenig Arbeitsspeicher).")
 
 
+class Cancelled(BaseException):
+    """The user cancelled the running job.
+
+    Deliberately not an :class:`Exception`: the many "one document must not
+    stop the others" handlers must not swallow it.
+    """
+
+
 def friendly_message(exc: BaseException) -> str:
     """Text for the user for any exception (never a traceback or a path)."""
     if isinstance(exc, UserError):

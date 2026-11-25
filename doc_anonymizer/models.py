@@ -100,6 +100,21 @@ CATEGORY_PLACEHOLDERS_DE: dict[Category, str] = {
 }
 
 
+#: Bits of :attr:`Word.flags`.
+#: The word is in the file but *not visible* on the page: covered by a black
+#: bar or an image, written in white, in invisible render mode, clipped away
+#: or outside the page. It takes part in the detection, but never reaches
+#: the output.
+HIDDEN = 1
+#: Written vertically (rotated by 90°), e.g. margin lines of letterheads.
+VERTICAL = 2
+#: Written at any other angle (stamps, watermarks).
+SLANTED = 4
+#: Hidden word lying on an image – typically the text layer of a scan, i.e.
+#: the image shows this text at this place.
+ON_IMAGE = 8
+
+
 @dataclass(slots=True)
 class Word:
     """A single word on a page together with its bounding box.
@@ -117,11 +132,21 @@ class Word:
     line_id: int = 0  # words sharing a line_id are on the same visual line
     #: OCR confidence 0..100 (always 100 for the PDF's own text layer)
     conf: float = 100.0
+    #: Combination of :data:`HIDDEN`, :data:`VERTICAL`, :data:`SLANTED`, :data:`ON_IMAGE`
+    flags: int = 0
+
+    @property
+    def hidden(self) -> bool:
+        """In the file, but not visible on the page (see :data:`HIDDEN`)."""
+        return bool(self.flags & HIDDEN)
 
     def to_list(self) -> list[Any]:
         """Compact JSON representation (keeps cache files small)."""
-        return [round(self.x0, 2), round(self.y0, 2), round(self.x1, 2), round(self.y1, 2),
+        data = [round(self.x0, 2), round(self.y0, 2), round(self.x1, 2), round(self.y1, 2),
                 self.text, self.source, self.line_id, round(self.conf)]
+        if self.flags:
+            data.append(self.flags)
+        return data
 
     @classmethod
     def from_list(cls, data: list[Any]) -> "Word":

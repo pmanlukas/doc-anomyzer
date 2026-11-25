@@ -37,6 +37,11 @@ class OcrUnavailableError(UserError):
     """Raised when a scanned page has to be processed but Tesseract is missing."""
 
 
+#: Longest time Tesseract may need for one page (seconds). Normal pages take
+#: a few seconds; a hanging run must not block the whole queue forever.
+OCR_TIMEOUT = 300
+
+
 @lru_cache(maxsize=1)
 def tesseract_cmd() -> str | None:
     """Locate the tesseract executable (``None`` if it is not installed).
@@ -121,8 +126,16 @@ def ocr_words(image: Image.Image, scale: float, language: str = "deu+eng",
             "können ohne Texterkennung nicht anonymisiert werden.")
     pytesseract.pytesseract.tesseract_cmd = cmd
 
-    data = pytesseract.image_to_data(image, lang=language, config=_config(psm),
-                                     output_type=pytesseract.Output.DICT)
+    try:
+        data = pytesseract.image_to_data(image, lang=language, config=_config(psm),
+                                         output_type=pytesseract.Output.DICT,
+                                         timeout=OCR_TIMEOUT)
+    except RuntimeError as exc:
+        if "timeout" not in str(exc).lower():
+            raise
+        raise UserError("Die Texterkennung hat für eine Seite zu lange gebraucht und wurde "
+                        "abgebrochen. Bitte die Seite prüfen (sehr großes oder beschädigtes "
+                        "Bild?) oder das Dokument ohne diese Seite verarbeiten.") from exc
     words: list[Word] = []
     for i, text in enumerate(data["text"]):
         text = (text or "").strip()

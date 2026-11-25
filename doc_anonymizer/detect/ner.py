@@ -73,9 +73,11 @@ def load_spacy():
             return nlp
         except OSError:
             continue
-    raise RuntimeError(
-        "Kein deutsches Sprachmodell gefunden. Bitte „Installieren.bat“ ausführen "
-        "(benötigt einmalig Internet).")
+    from ..errors import UserError
+
+    raise UserError(
+        "Das Sprachmodell des Programms fehlt. Bitte das Setup "
+        "„Dokumenten-Anonymisierer-Setup.exe“ noch einmal ausführen.")
 
 
 def _known_words_file() -> Path:

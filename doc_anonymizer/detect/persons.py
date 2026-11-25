@@ -196,6 +196,12 @@ class PersonRules:
                 # (address blocks, signatures). "Herr Max\nMustermann" in
                 # running text still continues because only a first name was seen.
                 break
+            if names and "\n" in text[names[-1].end:tok.start] and j + 1 < len(tokens) \
+                    and tokens[j + 1].clean[:1].isdigit() \
+                    and "\n" not in text[tok.end:tokens[j + 1].start]:
+                # Next line is "Word 12": a street with house number, not a name
+                # ("Grit Herrmann" / "Pärtzeltring 517" in an address block).
+                break
             if is_name_token(tok):
                 if names and not self._continues(names, tok, strong):
                     break

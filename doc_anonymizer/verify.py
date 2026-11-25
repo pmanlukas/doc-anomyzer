@@ -54,6 +54,10 @@ class Check:
     name: str
     ok: bool
     detail: str = ""
+    #: The check could not be carried out (switched off, tool missing,
+    #: technical problem). It is then neither passed nor failed – the report
+    #: and the interface say so instead of showing a green tick.
+    skipped: bool = False
 
 
 @dataclass
@@ -95,10 +99,16 @@ class VerificationResult:
     def passed(self) -> bool:
         return not self.leaks and all(c.ok for c in self.checks)
 
+    @property
+    def complete(self) -> bool:
+        """Were all verification stages really carried out?"""
+        return not any(c.skipped for c in self.checks)
+
     def to_dict(self) -> dict:
         data = asdict(self)
         data.pop("scan_pages", None)
         data["passed"] = self.passed
+        data["complete"] = self.complete
         return data
 
 
@@ -162,6 +172,10 @@ def iban_fragments(text: str) -> list[str]:
 
 #: Categories whose terms are proper names: in German always capitalised.
 _NAME_CATEGORIES = {Category.PERSON, Category.LOCATION, Category.ORG, Category.OTHER_NAME}
+#: Names of courts and authorities stay readable ("Amtsgericht Köln") – the
+#: same categories the detection leaves alone there. A *person's* name after
+#: such a word ("Richterin am Landgericht Mustermann") is a leak.
+_KEPT_AFTER_COURT = {Category.LOCATION, Category.ORG, Category.OTHER_NAME, None}
 
 
 @dataclass
@@ -223,10 +237,49 @@ def _contains(hay: Haystack, term: str, compact: bool,
             if not re.search(r"[@_]|\.\S|\S\.", near.replace(match.group(0), " ", 1)):
                 continue
         before = hay.raw[:match.start()].rstrip().rsplit(None, 1)
-        if before and is_keep_prefix(before[-1]):
-            continue
+        if before and category in _KEPT_AFTER_COURT and is_keep_prefix(before[-1]):
+            continue  # "Landgericht Musterstadt" stays readable by design
         return True
     return False
+
+
+_UMLAUTS = str.maketrans({"ä": "ae", "ö": "oe", "ü": "ue", "ß": "ss",
+                           "Ä": "Ae", "Ö": "Oe", "Ü": "Ue"})
+#: "KlageMustermann2024" -> "Klage Mustermann 2024"
+_WORD_JOINTS = re.compile(r"(?<=\p{Ll})(?=\p{Lu})|(?<=\p{L})(?=\p{N})|(?<=\p{N})(?=\p{L})")
+
+
+def split_name_words(text: str) -> str:
+    """Separate the words of a file name ("_", camel case, digits)."""
+    text = unicodedata.normalize("NFC", text).replace("_", " ")
+    return _WORD_JOINTS.sub(" ", text)
+
+
+def _name_keys(text: str) -> set[str]:
+    """Spellings of ``text`` as they occur in file names: letters and digits
+    only, without diacritics, umlauts also written out ("Mueller")."""
+    text = unicodedata.normalize("NFC", text)
+    return {"".join(ch for ch in fold(variant).casefold() if ch.isalnum())
+            for variant in (text, text.translate(_UMLAUTS))}
+
+
+def name_leaks(stem: str, terms) -> list[tuple[str, str, Category]]:
+    """Original terms that can be read in a file or folder name.
+
+    Stricter than the text check – file names have no grammar: a name also
+    counts in lower case, inside a longer word ("klagemustermann") and in
+    another spelling ("Mueller" for "Müller").
+    """
+    hay = Haystack(split_name_words(stem))
+    hay_keys = _name_keys(stem)
+    found = []
+    for term, entity_id, category, compact in terms:
+        hit = _contains(hay, term, compact, category)
+        if not hit and not compact:
+            hit = any(len(key) >= 5 and key in h for key in _name_keys(term) for h in hay_keys)
+        if hit:
+            found.append((term, entity_id, category))
+    return found
 
 
 def _fuzzy_hits(words: list[str], index: FuzzyIndex) -> set[str]:
@@ -313,10 +366,8 @@ def verify_document(output: Path, doc_index: int, expected_pages: int,
     structure = _structure_checks(doc, expected_pages) + [_revision_check(output)]
 
     # ---- Stage 1: text layer and file name ---------------------------------
-    name_hay = Haystack(output.stem.replace("_", " "))
-    for term, entity_id, category, compact in terms:
-        if _contains(name_hay, term, compact, category):
-            result.leaks.append(Leak(0, category.value, entity_id, term, "Dateiname"))
+    for term, entity_id, category in name_leaks(output.stem, terms):
+        result.leaks.append(Leak(0, category.value, entity_id, term, "Dateiname"))
 
     pages_for_scan: list[PageInfo] = []
     for page in doc:
@@ -358,7 +409,10 @@ def verify_document(output: Path, doc_index: int, expected_pages: int,
     else:
         result.checks.append(Check(
             "Prüfstufe 2 – Bildprüfung", True,
-            "übersprungen (abgeschaltet oder Texterkennung nicht installiert)"))
+            "nicht ausgeführt (" + ("in den Einstellungen abgeschaltet"
+                                    if not settings.deep_verification
+                                    else "Texterkennung nicht installiert") + ")",
+            skipped=True))
     doc.close()
 
     # ---- Stage 3: recovery attempts (forensics) -------------------------------
@@ -377,6 +431,10 @@ def verify_document(output: Path, doc_index: int, expected_pages: int,
             "; ".join(forensic.methods) + (
                 " | Probleme: " + ", ".join(forensic.structure_problems)
                 if forensic.structure_problems else "")))
+    else:
+        result.checks.append(Check(
+            "Prüfstufe 3 – Wiederherstellungsversuche", True,
+            "nicht ausgeführt (in den Einstellungen abgeschaltet)", skipped=True))
 
     result.checks.extend(structure)
 
@@ -392,12 +450,17 @@ def verify_document(output: Path, doc_index: int, expected_pages: int,
 def finish_verification(result: VerificationResult, registry: CaseRegistry,
                         settings: Settings) -> None:
     """Stage 4 (needs the language model, therefore run in the main process)."""
-    result.suspects = residual_scan(result.scan_pages, registry, settings)
+    suspects = residual_scan(result.scan_pages, registry, settings)
+    result.scan_pages = []
+    if suspects is None:
+        result.checks.append(Check("Prüfstufe 4 – Nachkontrolle mit KI/Regeln", True,
+                                   "nicht ausgeführt (technisches Problem)", skipped=True))
+        return
+    result.suspects = suspects
     result.checks.append(Check(
         "Prüfstufe 4 – Nachkontrolle mit KI/Regeln", True,
         f"{len(result.suspects)} Hinweis(e) zur Sichtprüfung" if result.suspects
         else "keine Auffälligkeiten"))
-    result.scan_pages = []
 
 
 def _image_check(doc: pymupdf.Document, terms, settings: Settings,
@@ -453,8 +516,11 @@ _LABEL_RE = re.compile(r"\[[^\]]{1,40}\]|\b\p{Lu}\.(?: \(\d+\))?")
 
 
 def residual_scan(pages: list[PageInfo], registry: CaseRegistry,
-                  settings: Settings) -> list[Suspect]:
-    """Run the detectors again on the output text and list what they still find."""
+                  settings: Settings) -> list[Suspect] | None:
+    """Run the detectors again on the output text and list what they still find.
+
+    ``None``: the scan could not be carried out.
+    """
     detector = Detector(settings)
     replacements = {normalise(e.replacement) for e in registry.entities.values()}
     disabled = {normalise(v) for e in registry.entities.values() if not e.enabled
@@ -465,7 +531,7 @@ def residual_scan(pages: list[PageInfo], registry: CaseRegistry,
         detections = detector.detect_document(pages)
     except Exception:  # noqa: BLE001 - the scan is an extra, never fatal
         log.exception("residual scan failed")
-        return []
+        return None
     for page_dets in detections:
         for det in page_dets:
             if det.meta.get("weak"):

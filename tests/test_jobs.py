@@ -12,7 +12,10 @@ import pytest
 from doc_anonymizer import jobs, parallel
 from doc_anonymizer.config import Settings
 from doc_anonymizer.errors import WorkerCrashed
-from doc_anonymizer.jobs import FAILED_FOLDER, CaseStore, Worker
+from doc_anonymizer.errors import Cancelled
+from doc_anonymizer.jobs import (CONFIDENTIAL_FOLDER, FAILED_FOLDER, CaseStore, NameAnonymiser,
+                                 Worker)
+from doc_anonymizer.verify import name_leaks, search_terms
 from doc_anonymizer.web import create_app
 
 from .pool_helpers import work
@@ -106,9 +109,12 @@ def test_failed_verification_is_quarantined(tmp_path, monkeypatch):
     doc = case.documents[0]
     assert case.status == "fertig" and doc.verification["passed"] is False
     assert FAILED_FOLDER in doc.output and FAILED_FOLDER in doc.text_output
-    # nothing that looks finished lies in the main folder
-    top = [p.name for p in os.scandir(case.output_dir) if p.is_file()]
-    assert not [n for n in top if n.endswith(("_anonymisiert.pdf", "_anonymisiert.txt"))]
+    assert CONFIDENTIAL_FOLDER in doc.output and os.path.exists(doc.output)
+    # No result folder "to pass on" exists – nothing passed.
+    assert case.output_dir == ""
+    root = Settings.load().output_dir
+    assert os.listdir(root) == [CONFIDENTIAL_FOLDER]
+    assert not (store.folder(case.id) / "ausgabe").exists()  # working copies are gone
     client = create_app(store, start_worker=False).test_client()
     summary = client.get(f"/api/cases/{case.id}").get_json()["summary"]
     assert summary["passed"] is False and summary["not_passed"] == 1
@@ -186,3 +192,171 @@ def test_case_files_from_newer_versions_still_load(tmp_path):
     data["documents"] = [{"name": "a.pdf", "stored": "dok_0001.pdf", "zukunft": True}]
     path.write_text(json.dumps(data))
     assert store.load(case.id).documents[0].name == "a.pdf"
+
+
+# ------------------------------------------------------------ result folders
+
+def _finished_case(tmp_path, monkeypatch, title="Sache Mustermann", name="Klage.pdf"):
+    monkeypatch.setattr(jobs, "run_in_pool", lambda *a, **k: False)
+    store = CaseStore(tmp_path / "store")
+    case = store.create(title)
+    store.add_document(case, name, make_digital_pdf(tmp_path / "ok.pdf").read_bytes())
+    worker = _worker(store)
+    worker.analyse(case.id)
+    worker.redact(case.id)
+    return store, worker, store.load(case.id)
+
+
+def test_result_folder_contains_only_what_may_be_passed_on(tmp_path, monkeypatch):
+    store, _worker_, case = _finished_case(tmp_path, monkeypatch)
+    root = Settings.load().output_dir
+    assert case.status == "fertig" and os.path.dirname(case.output_dir) == root
+    names = sorted(os.listdir(case.output_dir))
+    assert names == ["Klage_Pruefbericht.html", "Klage_anonymisiert.pdf",
+                     "Klage_anonymisiert.txt"]
+    # The mapping table lies outside – zipping the result folder never includes it.
+    assert CONFIDENTIAL_FOLDER in case.mapping and os.path.exists(case.mapping)
+    assert not case.mapping.startswith(case.output_dir)
+    assert os.path.basename(os.path.dirname(case.mapping)) == os.path.basename(case.output_dir)
+    # The client's name in the case title does not end up in the folder name.
+    assert "Mustermann" not in case.output_dir
+
+
+def _at(monkeypatch, hour: int, minute: int) -> None:
+    """Let the next run believe it starts at this time (folder names carry it)."""
+    import datetime as real
+
+    class Clock:
+        @staticmethod
+        def now():
+            return real.datetime(2031, 5, 4, hour, minute)
+
+    monkeypatch.setattr(jobs, "datetime", Clock)
+
+
+def test_new_run_replaces_the_old_results(tmp_path, monkeypatch):
+    """After a correction no outdated (flawed) result may stay behind."""
+    store, worker, case = _finished_case(tmp_path, monkeypatch)
+    first = case.output_dir
+    old_files = [p for p in case.written if os.path.isfile(p)]
+    assert len(old_files) == 4  # PDF, text, report, mapping table
+    _at(monkeypatch, 9, 30)
+    worker.redact(case.id)
+    case = store.load(case.id)
+    assert case.output_dir != first and not os.path.exists(first)
+    assert not any(os.path.exists(p) for p in old_files)
+    assert os.path.exists(case.documents[0].output) and os.path.exists(case.mapping)
+    root = Settings.load().output_dir
+    assert sorted(os.listdir(root)) == sorted([os.path.basename(case.output_dir),
+                                               CONFIDENTIAL_FOLDER])
+    assert os.listdir(os.path.join(root, CONFIDENTIAL_FOLDER)) == [
+        os.path.basename(case.output_dir)]
+
+    # A folder the user put own files into is kept – only our files go.
+    second = case.output_dir
+    with open(os.path.join(second, "eigene Notiz.txt"), "w") as fh:
+        fh.write("bleibt")
+    _at(monkeypatch, 9, 45)
+    worker.redact(case.id)
+    assert os.listdir(second) == ["eigene Notiz.txt"]
+
+
+def test_cancel_puts_the_case_back(tmp_path, monkeypatch):
+    monkeypatch.setattr(jobs, "run_in_pool", lambda *a, **k: False)
+    store = CaseStore(tmp_path / "store")
+    case = store.create("Abbruch")
+    for n in range(3):
+        store.add_document(case, f"Brief {n}.pdf",
+                           make_digital_pdf(tmp_path / "ok.pdf").read_bytes())
+    worker = _worker(store)
+    worker.analyse(case.id)
+
+    # Cancel while the second document is being anonymised.
+    original = jobs.anonymise_document
+    seen = []
+
+    def slow(source, target, index, *args, **kwargs):
+        seen.append(index)
+        if index == 1:
+            worker.cancel(case.id)
+        return original(source, target, index, *args, **kwargs)
+
+    monkeypatch.setattr(jobs, "anonymise_document", slow)
+    with pytest.raises(Cancelled):
+        worker.redact(case.id)
+    worker._after_cancel(case.id, "redact")
+    case = store.load(case.id)
+    assert case.status == "pruefung" and seen == [0, 1]
+    assert not case.output_dir and not any(d.output for d in case.documents)
+    root = Settings.load().output_dir
+    assert not os.path.exists(root) or os.listdir(root) == []  # nothing half-done stays
+    assert not (store.folder(case.id) / "ausgabe").exists()
+    # ... and the review can go on: nothing of the user's work is lost.
+    assert (store.folder(case.id) / "register.json").exists()
+
+
+def test_cancel_in_worker_processes(monkeypatch):
+    from .pool_helpers import slow
+
+    monkeypatch.setattr(parallel, "worker_count", lambda n: 2)
+    started = time.monotonic()
+    results = []
+    with pytest.raises(Cancelled):
+        parallel.run_in_pool([(n, slow, (30,)) for n in range(4)],
+                             lambda i, r: results.append(i), lambda i, e: None,
+                             cancelled=lambda: time.monotonic() - started > 2)
+    assert time.monotonic() - started < 20 and results == []
+
+
+def test_single_document_can_run_isolated(monkeypatch):
+    """After a crash of the whole program the next attempt uses a worker process."""
+    monkeypatch.setattr(parallel, "worker_count", lambda n: 1)
+    results, errors = {}, {}
+    assert parallel.run_in_pool([(0, work, (1,))], results.__setitem__, errors.__setitem__) is False
+    assert parallel.run_in_pool([(0, work, (2,))], results.__setitem__, errors.__setitem__,
+                                isolate=True) is True
+    assert isinstance(errors[0], WorkerCrashed) and not results
+
+
+# ----------------------------------------------------------------- file names
+
+def _registry_with(*people):
+    from doc_anonymizer.models import Category, Entity
+    from doc_anonymizer.registry import CaseRegistry
+
+    registry = CaseRegistry([[]], Settings.load())
+    for n, (given, surname) in enumerate(people):
+        full = f"{given} {surname}"
+        label = f"{given[0]}. {surname[0]}."
+        registry.entities[f"e{n}"] = Entity(
+            f"e{n}", Category.PERSON, full, label, given=[given], surname=surname,
+            variants=[full, surname], forms={"surname": f"{surname[0]}."})
+    return registry
+
+
+@pytest.mark.parametrize("stem, expected", [
+    ("Klage Mustermann", "Klage M"),
+    ("KlageMustermann", "Klage M"),             # camel case
+    ("Mustermann2024_Klage", "M. 2024 Klage"),  # digits right after the name
+    ("Schriftsatz_Mueller", "Schriftsatz M"),   # umlaut written out
+    ("Schriftsatz_Mu\u0308ller", "Schriftsatz M"),  # decomposed (macOS)
+    ("Vollmacht Meissner", "Vollmacht M"),      # ß written as ss
+    ("YILMAZ Bescheid", "Y. Bescheid"),         # dotless i
+    ("klagemustermann", "Dokument_007"),        # not separable: neutral name
+    ("Anlage K1", "Anlage K 1"),
+])
+def test_file_names_never_keep_a_name(stem, expected):
+    registry = _registry_with(("Max", "Mustermann"), ("Jörg", "Müller"), ("Ute", "Meißner"),
+                              ("Ali", "Yılmaz"))
+    terms = search_terms(registry)
+    name = NameAnonymiser(registry).clean(stem, terms, "Dokument_007")
+    assert name == expected
+    assert name_leaks(name, terms) == []
+
+
+def test_file_name_check_is_strict():
+    terms = search_terms(_registry_with(("Max", "Mustermann"), ("Jörg", "Müller")))
+    for stem in ("Klage_Mustermann", "klagemustermann2024", "MUSTERMANN", "Brief Mueller",
+                 "brief_muller_final"):
+        assert name_leaks(stem, terms), stem
+    assert name_leaks("Klageschrift_anonymisiert", terms) == []

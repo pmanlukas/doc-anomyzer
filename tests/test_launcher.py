@@ -106,6 +106,59 @@ def test_access_needs_the_token(home):
         server.kill()
 
 
+def test_further_window_gets_a_one_time_ticket(home):
+    """A second start asks the running program for a ticket – the address of
+    the window never contains the access token."""
+    from doc_anonymizer import launcher
+
+    server = _start(home)
+    try:
+        state = _state(home)
+        base = f"http://127.0.0.1:{state['port']}/"
+        assert launcher.request_ticket(base, "falsch") is None
+        ticket = launcher.request_ticket(base, state["token"])
+        assert ticket and ticket != state["token"]
+
+        class NoRedirect(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, *args, **kwargs):
+                return None
+
+        browser = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect)
+        with pytest.raises(urllib.error.HTTPError) as first:
+            browser.open(f"{base}?ticket={ticket}", timeout=5)
+        assert first.value.code == 303 and "anonymisierer_" in first.value.headers["Set-Cookie"]
+        with pytest.raises(urllib.error.HTTPError) as again:  # used up
+            browser.open(f"{base}?ticket={ticket}", timeout=5)
+        assert again.value.code == 401
+        # Temporary files live in the private folder, not in the system temp folder.
+        assert (home / "tmp").is_dir()
+    finally:
+        server.kill()
+
+
+def test_window_uses_its_own_browser_profile(home, monkeypatch):
+    """Edge is started with a profile of its own (separate cookies, no extensions)."""
+    from doc_anonymizer import launcher
+
+    started = []
+    monkeypatch.setattr(launcher, "_find_edge", lambda: "C:/Edge/msedge.exe")
+    monkeypatch.setattr(launcher.subprocess, "Popen",
+                        lambda args, **kwargs: started.append(args))
+    launcher.open_window("http://127.0.0.1:8765/", "einmal-ticket")
+    (args,) = started
+    assert args[0] == "C:/Edge/msedge.exe"
+    assert "--app=http://127.0.0.1:8765/?ticket=einmal-ticket" in args
+    assert f"--user-data-dir={home / 'fenster'}" in args
+    assert "--disable-extensions" in args and "--no-first-run" in args
+
+    # Without Edge (or if the user prefers a browser tab): the default browser.
+    opened = []
+    monkeypatch.setattr(launcher, "_find_edge", lambda: None)
+    monkeypatch.setattr(launcher.webbrowser, "open", lambda url: opened.append(url) or True)
+    launcher.open_window("http://127.0.0.1:8765/", "zweites-ticket")
+    assert opened == ["http://127.0.0.1:8765/?ticket=zweites-ticket"]
+
+
 def test_foreign_program_on_the_port_is_not_trusted(home):
     """A program that imitates the ping answer does not get the token."""
     from doc_anonymizer import launcher

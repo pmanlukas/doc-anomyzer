@@ -1,7 +1,7 @@
 ﻿DOKUMENTEN-ANONYMISIERER – EINRICHTEN IN 3 SCHRITTEN
 ====================================================
 
-Das Programm schwärzt personenbezogene Daten in PDF-Dateien. Es arbeitet
+Das Programm entfernt personenbezogene Daten aus PDF-Dateien. Es arbeitet
 ausschließlich auf Ihrem Computer – es werden keine Dokumente ins Internet
 gesendet. Für die Einrichtung wird kein Internet und kein Administrator
 benötigt.
@@ -24,17 +24,40 @@ benötigt.
 3. Künftig: Doppelklick auf das Symbol „Dokumenten-Anonymisierer“
    auf dem Desktop (oder im Startmenü).
 
-   Das Programm öffnet sich im Browser. Ein weiteres Fenster gibt es
-   nicht. Zum Beenden oben rechts auf „Beenden“ klicken – oder einfach den
-   Browser schließen: Das Programm beendet sich nach ein paar Minuten von
-   selbst.
+   Das Programm öffnet sich in einem eigenen Fenster. Zum Beenden einfach
+   das Fenster schließen – mehr ist nicht nötig.
+
+
+So arbeiten Sie damit
+---------------------
+1. PDF-Dateien (oder einen ganzen Ordner) in das Fenster ziehen.
+   Das Programm liest sie sofort – auch eingescannte Seiten.
+2. Kurz prüfen: Unter „Offene Fragen“ stehen nur die Stellen, bei denen
+   sich das Programm nicht sicher ist. Fehlt etwas, die Stelle auf der
+   Seite mit der Maus einrahmen.
+3. Auf „Anonymisieren und speichern“ klicken. Danach „Ordner öffnen“ –
+   dort liegen die fertigen, geprüften Dateien.
+
+Eine ausführlichere Erklärung finden Sie im Programm oben rechts unter
+„Hilfe“.
 
 
 Gut zu wissen
 -------------
-• Ergebnisse: im Ordner „Anonymisiert“ in Ihrem Benutzerordner.
-  Den Unterordner „VERTRAULICH_nicht_weitergeben“ niemals weitergeben.
+• Ergebnisse: im Ordner „Anonymisiert“ in Ihrem Benutzerordner (auf der
+  Startseite änderbar). Jede Akte erhält einen Unterordner mit Datum. Er
+  enthält nur geprüfte Dateien und kann als Ganzes weitergegeben werden.
+• Der Ordner „VERTRAULICH_nicht_weitergeben“ am selben Speicherort enthält
+  die Zuordnungstabellen (welcher Name zu welcher Abkürzung wurde).
+  Diesen Ordner niemals weitergeben oder hochladen.
+• Ins Ergebnis kommt nur, was auf den Seiten zu sehen ist: versteckter
+  Text und die Kameradaten von Fotos werden nicht übernommen.
 • Neue Version: einfach die neue Setup.exe ausführen. Akten, Einstellungen
   und Gelerntes bleiben erhalten.
 • Entfernen: Windows-Einstellungen → Apps → „Dokumenten-Anonymisierer“ →
-  Deinstallieren. Ihre Akten und Ergebnisse bleiben erhalten.
+  Deinstallieren. Dabei werden Sie gefragt, ob auch die Arbeitsdaten des
+  Programms (gespeicherte Akten, Einstellungen, Gelerntes) gelöscht werden
+  sollen. Ihre fertigen Ergebnisse bleiben in jedem Fall erhalten.
+• Bei Problemen: Die Datei „programm.log“ im Ordner
+  %LOCALAPPDATA%\DocAnonymizer\logs enthält die technischen Details
+  (keine Inhalte Ihrer Dokumente).

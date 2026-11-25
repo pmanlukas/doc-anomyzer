@@ -14,8 +14,11 @@ from __future__ import annotations
 import json
 import os
 import sys
+import threading
+import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from typing import ClassVar
 
 from .models import Category
 
@@ -53,6 +56,64 @@ def home_dir() -> Path:
         except OSError:
             pass
     return base
+
+
+def atomic_write_text(path: Path, text: str) -> None:
+    """Write a file so that readers see either the old or the new content.
+
+    A crash (or a forced end of the program) while writing must not leave a
+    half-written file behind. On Windows replacing fails while another
+    thread/process is reading the file – retried for a moment.
+    """
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+    tmp.write_text(text, encoding="utf-8")
+    for attempt in range(20):
+        try:
+            tmp.replace(path)
+            return
+        except PermissionError:
+            if attempt == 19:
+                tmp.unlink(missing_ok=True)
+                raise
+            time.sleep(0.05)
+
+
+def private_temp_dir(clean: bool = False) -> Path:
+    """Temporary files of the program (page images for the text recognition,
+    uploads in transit) – inside the private folder instead of the shared
+    system temp folder. ``clean`` empties it (program start/end)."""
+    import shutil
+    import tempfile
+
+    path = home_dir() / "tmp"
+    if clean:
+        shutil.rmtree(path, ignore_errors=True)
+    path.mkdir(parents=True, exist_ok=True, mode=0o700)
+    for name in ("TMPDIR", "TEMP", "TMP"):  # inherited by worker processes and Tesseract
+        os.environ[name] = str(path)
+    tempfile.tempdir = str(path)
+    return path
+
+
+def quiet_subprocesses() -> None:
+    """Start helper programs (Tesseract …) without a window of their own.
+
+    The installed program has no console (pythonw). Every console program
+    it starts would otherwise open a black window for a moment – once per
+    page read. Windows only; harmless for programs with a window.
+    """
+    import subprocess
+
+    if not sys.platform.startswith("win") or getattr(subprocess.Popen, "_quiet", False):
+        return
+    original = subprocess.Popen.__init__
+
+    def init(self, *args, **kwargs):
+        kwargs["creationflags"] = kwargs.get("creationflags", 0) | subprocess.CREATE_NO_WINDOW
+        original(self, *args, **kwargs)
+
+    subprocess.Popen.__init__ = init  # type: ignore[method-assign]
+    subprocess.Popen._quiet = True  # type: ignore[attr-defined]
 
 
 def user_models_dir() -> Path:
@@ -151,24 +212,46 @@ class Settings:
 
     # -- persistence -------------------------------------------------------
 
+    #: True if the settings file exists but cannot be read: the values are
+    #: then defaults – nothing irreversible (automatic deletion) may be
+    #: derived from them.
+    damaged: ClassVar[bool] = False
+
     @staticmethod
     def path() -> Path:
         return home_dir() / "settings.json"
+
+    @classmethod
+    def stored_keys(cls) -> set[str]:
+        """Names of the settings the file on disk really contains."""
+        try:
+            raw = json.loads(cls.path().read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return set()
+        return set(raw) if isinstance(raw, dict) else set()
+
+    @classmethod
+    def _defaults(cls, damaged: bool) -> "Settings":
+        settings = cls()
+        settings.damaged = damaged  # type: ignore[misc]
+        return settings
 
     @classmethod
     def load(cls) -> "Settings":
         """Load settings from disk, falling back to defaults on any problem."""
         try:
             raw = json.loads(cls.path().read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return cls()
         except (OSError, ValueError):
-            return cls()
+            return cls._defaults(damaged=True)
         if not isinstance(raw, dict):
-            return cls()
+            return cls._defaults(damaged=True)
         known = {k: v for k, v in raw.items() if k in cls.__dataclass_fields__}
         try:
             settings = cls(**known)
         except TypeError:
-            return cls()
+            return cls._defaults(damaged=True)
         # Guard against unknown category names from older versions.
         valid = {c.value for c in Category}
         settings.categories = [c for c in settings.categories if c in valid]
@@ -177,11 +260,7 @@ class Settings:
     def save(self) -> None:
         # Written to a temporary file first: a crash while writing must not
         # leave a broken settings file behind.
-        path = self.path()
-        tmp = path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(asdict(self), indent=2, ensure_ascii=False),
-                       encoding="utf-8")
-        tmp.replace(path)
+        atomic_write_text(self.path(), json.dumps(asdict(self), indent=2, ensure_ascii=False))
 
     def enabled(self, category: Category) -> bool:
         return category is Category.MANUAL or category.value in self.categories
