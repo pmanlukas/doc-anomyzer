@@ -192,4 +192,58 @@ Check (Wait-Until { -not (Test-Path "$App\python") } 180) "Programmdateien entfe
 Check (-not (Test-Path $desktop) -and -not (Test-Path $startmenu)) "Symbole entfernt"
 Check ((Test-Path (Join-Path $UserData "logs\programm.log")) -and
        (@(Get-ChildItem $UserData -Recurse -Filter "*.json").Count -gt 0)) "Nutzerdaten (Akten, Einstellungen, Lernstand) bleiben erhalten"
+
+Step "Einrichtung mit einer PowerShell-Zeile (install.ps1)"
+# The line a user pastes into PowerShell, run by Windows PowerShell 5.1 with
+# the policy of a fresh Windows ("Restricted": no script files). The download
+# address is a local server offering the same files as a release.
+$Source = Join-Path $Root "build\quelle"
+Remove-Item $Source -Recurse -Force -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force "$Source\gut", "$Source\beschaedigt" | Out-Null
+Copy-Item "$PSScriptRoot\install.ps1", $Setup, "$Setup.sha256" "$Source\gut"
+# Second address: the published checksum, but a different file under the
+# setup's name (harmless, should the check ever fail to stop it).
+Copy-Item "$PSScriptRoot\install.ps1", "$Setup.sha256" "$Source\beschaedigt"
+Copy-Item "$env:SystemRoot\System32\whoami.exe" "$Source\beschaedigt\Dokumenten-Anonymisierer-Setup.exe"
+$listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
+$listener.Start()
+$sourcePort = $listener.LocalEndpoint.Port
+$listener.Stop()
+$Address = "http://127.0.0.1:$sourcePort"
+$server = Start-Process python -ArgumentList "-m", "http.server", $sourcePort, "--bind", "127.0.0.1",
+  "--directory", "`"$Source`"" -PassThru -WindowStyle Hidden
+try {
+  Check (Wait-Until { try { (Invoke-WebRequest "$Address/gut/install.ps1" -UseBasicParsing -TimeoutSec 2 -NoProxy).StatusCode -eq 200 }
+                      catch { $false } } 60) "Download-Adresse bereit ($Address)"
+
+  # 1. A file that does not match the published checksum is never started.
+  $env:DOC_ANONYMIZER_AUTOMATISCH = "1"
+  $env:DOC_ANONYMIZER_QUELLE = "$Address/beschaedigt"
+  $text = (& powershell.exe -NoProfile -ExecutionPolicy Restricted -Command "irm $Address/beschaedigt/install.ps1 | iex" | Out-String)
+  $code = $LASTEXITCODE
+  Write-Host $text
+  Check ($text -match "stimmt nicht mit") "Abweichende Datei wird an der Prüfsumme erkannt"
+  Check ($code -eq 1) "Fehlschlag wird gemeldet (Exitcode $code)"
+  Check (-not (Test-Path "$App\python")) "nichts eingerichtet"
+
+  # 2. The normal case, exactly as a user runs it: progress window, program starts afterwards.
+  Remove-Item Env:\DOC_ANONYMIZER_AUTOMATISCH
+  $env:DOC_ANONYMIZER_QUELLE = "$Address/gut"
+  $sw = [Diagnostics.Stopwatch]::StartNew()
+  & powershell.exe -NoProfile -ExecutionPolicy Restricted -Command "irm $Address/gut/install.ps1 | iex"
+  Check ($LASTEXITCODE -eq 0) "PowerShell-Zeile beendet mit Exitcode 0"
+  Write-Host ("Dauer (Download vom eigenen Rechner, Prüfsumme, Einrichtung): {0:N0} s" -f $sw.Elapsed.TotalSeconds)
+  Check (Test-Path "$App\python\pythonw.exe") "Programm in $App eingerichtet"
+  Check (Test-Path $desktop) "Desktop-Symbol vorhanden"
+  Check (Wait-Until { $null -ne (Get-Ping) } 120) "Programm wurde nach der Einrichtung gestartet"
+  Check (@(Get-ChildItem $env:TEMP -Directory -Filter "Dokumenten-Anonymisierer-*").Count -eq 0) `
+    "Heruntergeladene Setup-Datei wurde wieder entfernt"
+  & "$App\python\python.exe" -m doc_anonymizer.launcher --beenden
+  Check (Wait-Until { $null -eq (Get-Ping) } 60) "Programm beendet"
+  Get-WindowProcesses | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+} finally {
+  Remove-Item Env:\DOC_ANONYMIZER_QUELLE, Env:\DOC_ANONYMIZER_AUTOMATISCH -ErrorAction SilentlyContinue
+  Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue
+}
+
 Write-Host "`nAlle Setup-Tests bestanden."

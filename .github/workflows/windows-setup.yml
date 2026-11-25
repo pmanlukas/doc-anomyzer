@@ -5,6 +5,8 @@ name: Windows-Setup
 
 on:
   push:
+    branches: ["**"]
+    tags: ["v*"]
     paths:
       - "doc_anonymizer/**"
       - "installer/**"
@@ -13,6 +15,16 @@ on:
       - "ANLEITUNG.txt"
       - ".github/workflows/windows-setup.yml"
   workflow_dispatch:
+    inputs:
+      veroeffentlichen:
+        description: "Als Release veröffentlichen (Download-Adresse der PowerShell-Zeile)"
+        type: boolean
+        default: false
+
+# Building and testing only reads the repository; the release job below asks
+# for write access on its own.
+permissions:
+  contents: read
 
 concurrency:
   group: windows-setup-${{ github.ref }}
@@ -105,3 +117,61 @@ jobs:
         run: |
           $env:Path += ";C:\Program Files\Tesseract-OCR"
           python -m pytest -q
+
+  release:
+    # Publishes the tested setup as a GitHub release - the address the
+    # one-line installation (installer/install.ps1) downloads from. Only on
+    # purpose: for a version tag (v1.2.3) or a manual start with the checkbox.
+    # A published version is never replaced: a changed setup needs a new
+    # version number (doc_anonymizer/__init__.py).
+    needs: [setup, tests-windows]
+    if: >-
+      startsWith(github.ref, 'refs/tags/v') ||
+      (github.event_name == 'workflow_dispatch' && inputs.veroeffentlichen)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: Dokumenten-Anonymisierer-Setup
+          path: release
+      - name: Release anlegen
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' doc_anonymizer/__init__.py)"
+          tag="v${version}"
+          if [[ "${GITHUB_REF}" == refs/tags/* && "${GITHUB_REF_NAME}" != "${tag}" ]]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} passt nicht zur Programmversion ${version}."
+            exit 1
+          fi
+          if gh release view "${tag}" >/dev/null 2>&1; then
+            echo "::error::Release ${tag} gibt es bereits. Bitte die Versionsnummer erhöhen."
+            exit 1
+          fi
+          # The checksum file was written on Windows (line ends with CR LF).
+          setup="$(find release -name Dokumenten-Anonymisierer-Setup.exe -print -quit)"
+          expected="$(tr -d '\r' < "${setup}.sha256" | cut -d' ' -f1)"
+          actual="$(sha256sum "${setup}" | cut -d' ' -f1)"
+          if [[ -z "${expected}" || "${expected}" != "${actual}" ]]; then
+            echo "::error::Die Prüfsumme der Setup.exe stimmt nicht mit der gebauten Datei überein."
+            exit 1
+          fi
+          {
+            echo "Einrichtung unter Windows 10/11 - eine Zeile in PowerShell (Startmenü → „PowerShell“):"
+            echo
+            echo '```'
+            echo "irm https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/install.ps1 | iex"
+            echo '```'
+            echo
+            echo "Oder \`Dokumenten-Anonymisierer-Setup.exe\` herunterladen und doppelklicken (siehe ANLEITUNG.txt)."
+            echo
+            echo "SHA-256 der Setup.exe: \`${actual}\`"
+          } > notes.md
+          gh release create "${tag}" --target "${GITHUB_SHA}" --title "Dokumenten-Anonymisierer ${version}" \
+            --notes-file notes.md --latest \
+            "${setup}" "${setup}.sha256" installer/install.ps1 ANLEITUNG.txt

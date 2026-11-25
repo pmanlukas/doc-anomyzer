@@ -27,8 +27,42 @@ oder z. B. von einem KI-Sprachmodell analysiert werden.
 
 ## 1. Installation (Windows)
 
-**Empfohlen: `Dokumenten-Anonymisierer-Setup.exe`** – wie ein normales
-Windows-Programm (Anleitung für Nutzer: `ANLEITUNG.txt`, 3 Schritte):
+Zwei Wege, die dasselbe Setup einrichten (Anleitung für Nutzer:
+`ANLEITUNG.txt`).
+
+**Weg A: eine Zeile in PowerShell** – ohne die Windows-Warnung „Der Computer
+wurde durch Windows geschützt“. Startmenü → „PowerShell“ öffnen, Zeile
+einfügen, Eingabetaste:
+
+```powershell
+irm https://github.com/pmanlukas/doc-anomyzer/releases/latest/download/install.ps1 | iex
+```
+
+Die Zeile führt `installer/install.ps1` aus: Die Setup.exe des neuesten
+Release wird ohne Browser geladen, ihre SHA-256-Prüfsumme mit der
+veröffentlichten verglichen, das Setup ohne Administratorrechte eingerichtet
+und das Programm gestartet. Dieselbe Zeile aktualisiert eine vorhandene
+Installation.
+
+* **Warum erscheint keine Warnung?** Windows zeigt den SmartScreen-Hinweis
+  für Dateien, die ein Browser als „aus dem Internet“ markiert hat. Ein
+  Download über die Kommandozeile trägt diese Markierung nicht. Diese Prüfung
+  entfällt also bewusst: Wer die Zeile ausführt, vertraut diesem Repository.
+  Die Prüfsumme belegt nur, dass die Datei vollständig und unverändert
+  angekommen ist – nicht, von wem sie stammt.
+* **Voraussetzung:** ein öffentlich abrufbares Release (siehe
+  „Veröffentlichen“ unten). Solange das Repository privat ist, findet die
+  Zeile nichts.
+* **Hilft nicht** auf Rechnern, die nur signierte Programme zulassen (Smart
+  App Control unter Windows 11, AppLocker/WDAC in Firmennetzen) – das Skript
+  meldet dann, dass Windows den Start verhindert hat.
+* Für Administratoren (Umgebungsvariablen): `DOC_ANONYMIZER_AUTOMATISCH=1`
+  richtet ohne Fenster und ohne Programmstart ein und beendet PowerShell bei
+  einem Fehler mit Exitcode 1; `DOC_ANONYMIZER_QUELLE=<Adresse>` nennt einen
+  eigenen Download-Ort mit Setup.exe, `.sha256` und `install.ps1`.
+
+**Weg B: `Dokumenten-Anonymisierer-Setup.exe` per Doppelklick** – wie ein
+normales Windows-Programm, auch ohne Internet:
 
 1. Doppelklick auf die Setup.exe. Warnt Windows („Der Computer wurde durch
    Windows geschützt“): „Weitere Informationen“ → „Trotzdem ausführen“
@@ -54,8 +88,9 @@ Eigenschaften des Setups:
 * Startprobleme erscheinen als verständliche Windows-Meldung; Details stehen
   in `%LOCALAPPDATA%\DocAnonymizer\logs\programm.log` (ohne Inhalte und
   ohne Dateinamen der Dokumente),
-* **Update** = neue Setup.exe ausführen (ein laufendes Programm wird vorher
-  beendet). **Deinstallation** über „Apps & Features“.
+* **Update** = neue Setup.exe ausführen oder die PowerShell-Zeile
+  wiederholen (ein laufendes Programm wird vorher beendet).
+  **Deinstallation** über „Apps & Features“.
 
 Nutzerdaten liegen **getrennt** vom Programm und bleiben bei einem Update
 erhalten: Akten (Arbeitskopien der Originale), Einstellungen, Lernstand und
@@ -69,13 +104,26 @@ getestet (`.github/workflows/windows-setup.yml`, `installer/`): stille
 Installation, Selbsttest, Anonymisierung von Test-PDFs über die Kommandozeile
 und über das laufende Programm (inkl. Prüfung, dass ohne Zugangsschlüssel
 nichts erreichbar ist), Zweitstart, Beenden, selbstständiges Beenden, das
-echte Programmfenster in Edge, Update bei laufendem Programm, Deinstallation.
+echte Programmfenster in Edge, Update bei laufendem Programm, Deinstallation
+und die Einrichtung über die PowerShell-Zeile (Windows PowerShell 5.1 mit der
+Standardrichtlinie „Restricted“, gegen einen lokalen Download-Ort – auch mit
+einer Datei, die nicht zur Prüfsumme passt und deshalb nicht gestartet wird).
 Alle Bausteine, die in das Setup wandern, werden beim Bau gegen feste
 SHA-256-Prüfsummen bzw. die Windows-Signatur des Herstellers geprüft; die
 enthaltenen Paketversionen stehen in `enthaltene_pakete.txt` im
 Programmordner. Download: Actions → Lauf „Windows-Setup“ → Artefakt
 „Dokumenten-Anonymisierer-Setup“ (enthält auch die SHA-256-Prüfsumme der
 Setup.exe zum Vergleichen: `Get-FileHash Dokumenten-Anonymisierer-Setup.exe`).
+
+**Veröffentlichen:** Ein Release entsteht nur absichtlich – durch ein
+Versions-Tag (`git tag v0.2.0 && git push origin v0.2.0`) oder über Actions →
+„Windows-Setup“ → „Run workflow“ mit dem Haken „Als Release veröffentlichen“.
+Der Job `release` hängt die getestete Setup.exe, ihre Prüfsumme, `install.ps1`
+und `ANLEITUNG.txt` an das Release `v<Version>`. Eine veröffentlichte Version
+wird nie überschrieben: Eine geänderte Setup.exe braucht eine neue
+Versionsnummer (`doc_anonymizer/__init__.py`). Die PowerShell-Zeile lädt von
+`…/releases/latest/download/`; das funktioniert ohne Anmeldung nur bei einem
+öffentlichen Repository.
 
 **Alternative: ZIP + `Installieren.bat`** (lädt Python, Tesseract und das
 Sprachmodell bei der Installation aus dem Internet; ZIP erzeugen mit
@@ -429,7 +477,9 @@ geändert), teilt es sich dessen Cookie-Speicher und Erweiterungen – auf
 gemeinsam genutzten Rechnern bitte das eigene Fenster verwenden. Vor einem
 Benutzer mit Administratorrechten oder Schadsoftware im eigenen
 Benutzerkonto kann kein lokales Programm schützen. Die Setup.exe ist nicht
-code-signiert (SmartScreen-Hinweis bei der Installation).
+code-signiert: Beim Doppelklick erscheint der SmartScreen-Hinweis, und
+Rechner, die nur signierte Programme zulassen, starten sie gar nicht (auch
+nicht über die PowerShell-Zeile aus Abschnitt 1).
 
 ## 11. Für Entwickler
 
