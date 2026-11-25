@@ -25,6 +25,7 @@ from PIL import Image
 from . import ocr
 from .config import Settings
 from .models import PageInfo, Word
+from .errors import UserError
 from .parallel import ocr_threads
 from .signatures import detect_in_image, detect_vector_signatures
 
@@ -33,7 +34,7 @@ log = logging.getLogger(__name__)
 ProgressFn = Callable[[int, int, str], None]
 
 
-class PdfOpenError(RuntimeError):
+class PdfOpenError(UserError):
     """The PDF cannot be opened (damaged or password protected)."""
 
 
@@ -47,13 +48,21 @@ def open_pdf(path: Path) -> pymupdf.Document:
     try:
         doc = pymupdf.open(path)
     except Exception as exc:  # noqa: BLE001 - PyMuPDF raises various types
-        raise PdfOpenError(f"Die Datei „{path.name}“ ist kein lesbares PDF.") from exc
+        raise PdfOpenError("Die Datei ist beschädigt oder kein lesbares PDF.") from exc
+    # (Messages without the file name: inside the program the document is
+    #  stored under a neutral name; the interface shows the real one.)
     if doc.needs_pass:
         raise PdfOpenError(
-            f"Die Datei „{path.name}“ ist passwortgeschützt. Bitte das PDF zuerst "
-            "ohne Passwort speichern (z. B. „Drucken als PDF“).")
+            "Das PDF ist passwortgeschützt. Bitte zuerst ohne Passwort speichern "
+            "(z. B. im PDF-Programm „Drucken“ → „Als PDF speichern“).")
     if not doc.is_pdf:
-        raise PdfOpenError(f"Die Datei „{path.name}“ ist kein PDF.")
+        raise PdfOpenError("Die Datei ist kein PDF.")
+    if doc.page_count == 0:
+        raise PdfOpenError("Das PDF enthält keine Seiten.")
+    if doc.page_count > MAX_PAGES:
+        raise PdfOpenError(
+            f"Das PDF hat {doc.page_count} Seiten – mehr als das Programm verarbeitet "
+            f"({MAX_PAGES}). Bitte in mehrere Teile aufteilen.")
     try:
         doc.bake(annots=True, widgets=True)
     except Exception:  # noqa: BLE001 - very old/odd files: continue without baking
@@ -134,12 +143,39 @@ def _merge(primary: list[Word], secondary: list[Word]) -> list[Word]:
     return merged
 
 
-def render_page(page: pymupdf.Page, dpi: int, gray: bool = True) -> Image.Image:
-    """Render a page to a PIL image."""
-    pix = page.get_pixmap(dpi=dpi, colorspace=pymupdf.csGRAY if gray else pymupdf.csRGB,
-                          alpha=False)
+#: Upper limit for a rendered page image. Very large pages (construction
+#: plans in A0, but also deliberately oversized "bomb" pages) are rendered at
+#: a lower resolution instead of exhausting the memory. A4 at 300 dpi has
+#: 8.7 million pixels, A0 at 300 dpi 139 million.
+MAX_RENDER_PIXELS = 60_000_000
+#: Documents with more pages are refused (protects against hostile files).
+MAX_PAGES = 5000
+
+
+def effective_dpi(page: pymupdf.Page, dpi: float, limit: int = MAX_RENDER_PIXELS) -> float:
+    """``dpi``, reduced if the rendered page would exceed ``limit`` pixels."""
+    pixels = (page.rect.width / 72 * dpi) * (page.rect.height / 72 * dpi)
+    if pixels <= limit:
+        return dpi
+    return max(20.0, dpi * (limit / pixels) ** 0.5)
+
+
+def render_page(page: pymupdf.Page, dpi: float, gray: bool = True) -> Image.Image:
+    """Render a page to a PIL image (resolution capped, see :func:`effective_dpi`).
+
+    Callers that map image coordinates back to the page must use
+    :func:`image_scale` – the image may be smaller than ``dpi`` suggests.
+    """
+    zoom = effective_dpi(page, dpi) / 72
+    pix = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom),
+                          colorspace=pymupdf.csGRAY if gray else pymupdf.csRGB, alpha=False)
     mode = "L" if gray else "RGB"
     return Image.frombytes(mode, (pix.width, pix.height), pix.samples)
+
+
+def image_scale(page: pymupdf.Page, image: Image.Image) -> float:
+    """PDF points per pixel of an image made by :func:`render_page`."""
+    return page.rect.width / image.width
 
 
 def analyse_document(path: Path, settings: Settings,
@@ -147,7 +183,7 @@ def analyse_document(path: Path, settings: Settings,
     """Extract words from every page of ``path`` (OCR where necessary)."""
     doc = open_pdf(path)
     pages: list[PageInfo] = []
-    ocr_jobs: list[tuple[int, Image.Image]] = []
+    ocr_jobs: list[tuple[int, Image.Image, float]] = []
     has_hidden_layers = bool(doc.get_ocgs())
 
     for page in doc:
@@ -198,7 +234,8 @@ def analyse_document(path: Path, settings: Settings,
         if info.kind in ("scan", "mixed"):
             # Colour render: ink colour helps to find signatures.
             gray = not settings.detect_signatures
-            ocr_jobs.append((page.number, render_page(page, settings.ocr_dpi, gray=gray)))
+            image = render_page(page, settings.ocr_dpi, gray=gray)
+            ocr_jobs.append((page.number, image, image_scale(page, image)))
         elif settings.detect_signatures:
             info.signature_boxes = [c.to_list() for c in detect_vector_signatures(page, words)]
         if progress:
@@ -215,19 +252,18 @@ def analyse_document(path: Path, settings: Settings,
 
 
 def _run_ocr(doc: pymupdf.Document, pages: list[PageInfo],
-             jobs: list[tuple[int, Image.Image]], settings: Settings,
+             jobs: list[tuple[int, Image.Image, float]], settings: Settings,
              progress: ProgressFn | None) -> None:
     """OCR rendered page images in parallel (Tesseract runs as subprocess)."""
     if not jobs:
         return
     if not ocr.is_available():
         raise ocr.OcrUnavailableError(
-            "Das PDF enthält eingescannte Seiten, aber die Texterkennung (Tesseract) "
-            "ist nicht installiert. Bitte „Installieren.bat“ erneut ausführen.")
+            "Das PDF enthält eingescannte Seiten, aber die Texterkennung ist nicht "
+            "installiert. Bitte das Setup des Programms noch einmal ausführen.")
 
-    def work(job: tuple[int, Image.Image]):
-        number, image = job
-        scale = 72.0 / settings.ocr_dpi
+    def work(job: tuple[int, Image.Image, float]):
+        number, image, scale = job
         gray = image.convert("L") if image.mode != "L" else image
         words = ocr.ocr_words(gray, scale, settings.ocr_language)
         if settings.thorough_ocr:

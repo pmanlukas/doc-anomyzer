@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from functools import lru_cache
 
 from .config import DATA_DIR
@@ -61,8 +62,17 @@ def _base_forms(token: str) -> set[str]:
     return forms
 
 
+#: Labels of number fields in forms and letterheads: "Führerschein-Nr.",
+#: "Kunden-Nr", "Vertragsnummer", "Kfz-Kennzeichen" – never a name.
+_FIELD_LABEL = re.compile(r".{2,}(?:-nr|nr|-nummer|nummer|-kennzeichen|kennzeichen|-id|-idnr)", re.I)
+
+
+def is_field_label(token: str) -> bool:
+    return bool(_FIELD_LABEL.fullmatch(token.strip().rstrip(".:")))
+
+
 def is_stopword(token: str) -> bool:
-    return bool(_base_forms(token) & stopwords())
+    return bool(_base_forms(token) & stopwords()) or is_field_label(token)
 
 
 def is_keep_prefix(token: str) -> bool:

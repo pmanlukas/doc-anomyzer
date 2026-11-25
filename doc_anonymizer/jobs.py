@@ -25,17 +25,17 @@ import threading
 import time
 import traceback
 import uuid
-from concurrent.futures import as_completed
-from dataclasses import asdict, dataclass, field
-from datetime import datetime
+from dataclasses import asdict, dataclass, field, fields
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from . import learning, report
 from .config import Settings, home_dir, is_cloud_synced
 from .detect.pipeline import Detector
+from .errors import UserError, friendly_message
 from .extract import analyse_document
 from .models import PageInfo
-from .parallel import AnonymiseJob, anonymise_task, extract_task, make_pool
+from .parallel import AnonymiseJob, anonymise_task, extract_task, run_in_pool
 from .process import ProcessResult, anonymise_document
 from .registry import CaseRegistry
 from .verify import finish_verification
@@ -54,6 +54,9 @@ class DocumentInfo:
     report: str = ""  # path of the verification report
     verification: dict = field(default_factory=dict)
     notes: list[str] = field(default_factory=list)
+    #: Why this document could not be processed (text for the user); the
+    #: other documents of the case are processed normally.
+    error: str = ""
 
 
 @dataclass
@@ -74,14 +77,41 @@ class Case:
 
     @classmethod
     def from_dict(cls, data: dict) -> "Case":
-        data = dict(data)
-        data["documents"] = [DocumentInfo(**d) for d in data.get("documents", [])]
+        # Unknown keys (written by a newer version) are ignored.
+        doc_keys = {f.name for f in fields(DocumentInfo)}
+        case_keys = {f.name for f in fields(cls)}
+        data = {k: v for k, v in data.items() if k in case_keys}
+        data["documents"] = [DocumentInfo(**{k: v for k, v in d.items() if k in doc_keys})
+                             for d in data.get("documents", [])]
         return cls(**data)
 
 
-def _safe_filename(name: str) -> str:
-    name = re.sub(r"[^\w\-. ]+", "_", name, flags=re.UNICODE).strip(" .")
-    return name[:120] or "Dokument"
+#: Device names Windows does not accept as file names (with any extension).
+_RESERVED = {"con", "prn", "aux", "nul", *(f"com{i}" for i in range(1, 10)),
+             *(f"lpt{i}" for i in range(1, 10))}
+#: Folder for results that failed the verification – the name is the warning.
+FAILED_FOLDER = "NICHT BESTANDEN - nicht weitergeben"
+
+
+def _safe_filename(name: str, limit: int = 80) -> str:
+    """A file/folder name that is valid on Windows.
+
+    Only letters, digits, space, dot, hyphen and underscore survive; the
+    length is limited so the complete path stays below the 260 characters
+    many Windows programs still require.
+    """
+    name = re.sub(r"[^\w\-. ]+", "_", name, flags=re.UNICODE)
+    name = re.sub(r"\s+", " ", name)[:limit].strip(" ._")
+    if name.split(".")[0].casefold() in _RESERVED:
+        name = "_" + name
+    return name or "Dokument"
+
+
+def display_name(filename: str) -> str:
+    """Upload file name as shown to the user (no control characters, bounded)."""
+    name = "".join(ch for ch in (filename or "").replace("\\", "/") if ch.isprintable())
+    name = "/".join(part for part in name.split("/") if part not in ("", ".", ".."))
+    return name[-200:] or "Dokument.pdf"
 
 
 class CaseStore:
@@ -134,10 +164,39 @@ class CaseStore:
         with self._lock:
             shutil.rmtree(self.folder(case_id), ignore_errors=True)
 
-    def add_document(self, case: Case, filename: str, data: bytes) -> DocumentInfo:
-        stored = f"dok_{len(case.documents) + 1:03d}.pdf"
-        (self.folder(case.id) / stored).write_bytes(data)
-        doc = DocumentInfo(name=filename, stored=stored)
+    def purge(self, days: int) -> int:
+        """Delete the working data of cases untouched for ``days`` days.
+
+        The working data contains copies of the *original* documents; the
+        finished files in the result folder are not touched. Running cases
+        are never deleted. Returns the number of deleted cases.
+        """
+        if days <= 0:
+            return 0
+        limit = time.time() - timedelta(days=days).total_seconds()
+        deleted = 0
+        for path in list(self.root.glob("*/case.json")):
+            try:
+                if path.stat().st_mtime >= limit:
+                    continue
+                if self.load(path.parent.name).status in ("analyse", "schwaerzen"):
+                    continue
+            except (OSError, KeyError, ValueError, TypeError):
+                continue
+            self.delete(path.parent.name)
+            deleted += 1
+        return deleted
+
+    def add_document(self, case: Case, filename: str, source) -> DocumentInfo:
+        """Store an uploaded PDF (``source``: bytes or a readable stream)."""
+        stored = f"dok_{len(case.documents) + 1:04d}.pdf"
+        target = self.folder(case.id) / stored
+        if isinstance(source, (bytes, bytearray)):
+            target.write_bytes(source)
+        else:
+            with target.open("wb") as out:
+                shutil.copyfileobj(source, out, 1024 * 1024)
+        doc = DocumentInfo(name=display_name(filename), stored=stored)
         case.documents.append(doc)
         self.save(case)
         return doc
@@ -171,8 +230,38 @@ class Worker:
         self.jobs: queue.Queue[tuple[str, str]] = queue.Queue()
         self.training = {"running": False, "message": ""}
         self._active = 0  # jobs currently being processed
+        self._recover_interrupted()
+        self._purge()
         self.thread = threading.Thread(target=self._run, name="anonymizer-worker", daemon=True)
         self.thread.start()
+
+    def _recover_interrupted(self) -> None:
+        """Cases that were being processed when the program ended.
+
+        Without this they would show "wird verarbeitet …" forever.
+        """
+        for case in self.store.list():
+            if case.status == "schwaerzen" and \
+                    (self.store.folder(case.id) / "register.json").exists():
+                case.status = "pruefung"
+                case.warnings.append("Die Anonymisierung wurde unterbrochen, weil das Programm "
+                                     "beendet wurde. Bitte noch einmal starten.")
+            elif case.status in ("analyse", "schwaerzen"):
+                case.status = "fehler"
+                case.error = ("Die Verarbeitung wurde unterbrochen, weil das Programm beendet "
+                              "wurde. Bitte noch einmal starten.")
+            else:
+                continue
+            case.progress = {"done": 0, "total": 0, "step": ""}
+            self.store.save(case)
+
+    def _purge(self) -> None:
+        try:
+            deleted = self.store.purge(Settings.load().keep_days)
+            if deleted:
+                log.info("%d alte Akte(n) automatisch gelöscht", deleted)
+        except Exception:  # noqa: BLE001 - housekeeping must never break the program
+            log.exception("purge failed")
 
     def submit(self, case_id: str, action: str) -> None:
         self.jobs.put((case_id, action))
@@ -199,12 +288,14 @@ class Worker:
                 try:
                     case = self.store.load(case_id)
                     case.status = "fehler"
-                    case.error = str(exc) or exc.__class__.__name__
+                    case.error = friendly_message(exc)
                     self.store.save(case)
                 except KeyError:
                     pass
             finally:
                 self._active -= 1
+                if action != "train":
+                    self._purge()
 
     # ------------------------------------------------------------- learning
 
@@ -273,29 +364,61 @@ class Worker:
             detections[i] = detector.detect_document(pages)
             docs[i] = pages
 
-        pool = make_pool(total)
+        def fail(i: int, exc: BaseException) -> None:
+            # One unreadable document must not stop the others.
+            doc = case.documents[i]
+            doc.error = friendly_message(exc)
+            doc.pages, doc.kinds, doc.notes = 0, {}, []
+            docs[i], detections[i] = [], []
+            self.store.save_pages(case.id, i, [])
+            if not isinstance(exc, UserError):
+                log.error("Dokument %d konnte nicht gelesen werden:\n%s", i + 1,
+                          "".join(traceback.format_exception(exc)))
+
+        for doc in case.documents:
+            doc.error = ""
         started = time.monotonic()
-        if pool is None:
+        done = [0]
+
+        def step() -> None:
+            done[0] += 1
+            progress(done[0], total, _eta("Dokumente lesen", started, done[0], total))
+
+        def on_result(i: int, pages) -> None:
+            try:
+                finish(i, pages)
+            except Exception as exc:  # noqa: BLE001
+                fail(i, exc)
+            step()
+
+        def on_error(i: int, exc: BaseException) -> None:
+            fail(i, exc)
+            step()
+
+        jobs = [(i, extract_task, (str(path), settings)) for i, path in enumerate(paths)]
+        if not run_in_pool(jobs, on_result, on_error):
             for i, path in enumerate(paths):
                 prefix = f"Dokument {i + 1}/{total}: " if total > 1 else ""
-                finish(i, analyse_document(path, settings, self._progress_fn(case, prefix)))
-                progress(i + 1, total, _eta("Dokumente lesen", started, i + 1, total))
-        else:
-            with pool:
-                futures = {pool.submit(extract_task, str(path), settings): i
-                           for i, path in enumerate(paths)}
-                for n, future in enumerate(as_completed(futures), 1):
-                    i = futures[future]
-                    try:
-                        finish(i, future.result())
-                    except Exception as exc:  # noqa: BLE001 - name the broken file
-                        raise RuntimeError(f"{case.documents[i].name}: {exc}") from exc
-                    progress(n, total, _eta("Dokumente lesen", started, n, total))
+                try:
+                    finish(i, analyse_document(path, settings, self._progress_fn(case, prefix)))
+                except Exception as exc:  # noqa: BLE001
+                    fail(i, exc)
+                step()
+
+        failed = [d for d in case.documents if d.error]
+        if len(failed) == total:
+            case.status = "fehler"
+            case.error = failed[0].error if total == 1 else (
+                f"Keines der {total} Dokumente konnte gelesen werden. Erstes Problem: "
+                f"{failed[0].error}")
+            case.progress = {"done": 0, "total": 0, "step": ""}
+            self.store.save(case)
+            return
 
         registry = CaseRegistry(docs, settings)  # type: ignore[arg-type]
         registry.build(detections)
         self.store.save_registry(case.id, registry)
-        case.warnings = detector.warnings
+        case.warnings = list(detector.warnings)
         case.status = "pruefung"
         case.progress = {"done": 1, "total": 1, "step": "Bereit zur Prüfung"}
         self.store.save(case)
@@ -313,9 +436,14 @@ class Worker:
         registry.labels_frozen = True  # identical labels in every document
         names = NameAnonymiser(registry)
 
-        out_dir = Path(settings.output_dir) / _safe_filename(
-            f"{datetime.now():%Y-%m-%d_%H%M} {names(case.title)}")
-        out_dir.mkdir(parents=True, exist_ok=True)
+        out_dir = Path(settings.output_dir).expanduser() / _safe_filename(
+            f"{datetime.now():%Y-%m-%d_%H%M} {names(case.title)}", limit=70)
+        try:
+            out_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise UserError(
+                f"Der Ergebnisordner „{settings.output_dir}“ kann nicht angelegt werden. "
+                "Bitte in den Einstellungen einen anderen Speicherort wählen.") from exc
         case.output_dir = str(out_dir)
         if is_cloud_synced(out_dir):
             case.warnings.append("Der Ergebnisordner wird offenbar mit einem Cloud-Dienst "
@@ -348,6 +476,13 @@ class Worker:
             text_target = target.with_suffix(".txt")
             text_target.write_text(_text_export(result.texts), encoding="utf-8")
             _check_text_export(text_target, registry, verification)
+            if not verification.passed:
+                # A result that failed the verification must not look like a
+                # finished file: it is moved to a folder whose name says so.
+                quarantine = out_dir / FAILED_FOLDER
+                quarantine.mkdir(exist_ok=True)
+                target = _move(target, quarantine / target.name)
+                text_target = _move(text_target, quarantine / text_target.name)
             doc.output, doc.text_output = str(target), str(text_target)
             doc.verification = verification.to_dict()
             report_path = target.with_name(target.stem.replace("_anonymisiert", "")
@@ -356,33 +491,66 @@ class Worker:
                 case, doc, verification, result, registry), encoding="utf-8")
             doc.report = str(report_path)
 
-        pool = make_pool(total)
-        if pool is None:
-            for i, doc in enumerate(case.documents):
+        def fail(i: int, exc: BaseException) -> None:
+            # One document that cannot be anonymised must not stop the others;
+            # a half-written result must not stay behind.
+            doc = case.documents[i]
+            doc.error = "Anonymisierung nicht möglich: " + friendly_message(exc)
+            doc.output = doc.text_output = doc.report = ""
+            doc.verification = {}
+            for leftover in (targets[i], targets[i].with_suffix(".txt")):
+                try:
+                    leftover.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            if not isinstance(exc, UserError):
+                log.error("Dokument %d konnte nicht anonymisiert werden:\n%s", i + 1,
+                          "".join(traceback.format_exception(exc)))
+
+        # Documents that could not be read during the analysis are skipped.
+        todo = [i for i in range(total) if registry.docs[i]]
+        for i, doc in enumerate(case.documents):
+            if i in todo:
+                doc.error = ""
+            doc.output = doc.text_output = doc.report = ""
+            doc.verification = {}
+        done = [0]
+
+        def step() -> None:
+            done[0] += 1
+            progress(done[0], len(todo),
+                     _eta("Anonymisieren und prüfen", started, done[0], len(todo)))
+
+        def on_result(i: int, payload) -> None:
+            try:
+                processed, mentions, boxes, pages = payload
+                registry.replace_document_results(i, mentions, boxes)
+                registry.docs[i] = pages
+                finish(i, processed)
+            except Exception as exc:  # noqa: BLE001
+                fail(i, exc)
+            step()
+
+        def on_error(i: int, exc: BaseException) -> None:
+            fail(i, exc)
+            step()
+
+        jobs = [(i, anonymise_task, (AnonymiseJob(
+            str(self.store.folder(case.id) / case.documents[i].stored), str(targets[i]), i,
+            total, registry.docs[i], registry.state_for_document(i), settings),))
+            for i in todo]
+        if not run_in_pool(jobs, on_result, on_error):
+            for i in todo:
                 prefix = f"Dokument {i + 1}/{total}: " if total > 1 else ""
-                source = self.store.folder(case.id) / doc.stored
-                finish(i, anonymise_document(source, targets[i], i, registry.docs[i], registry,
-                                             settings, self._progress_fn(case, prefix),
-                                             run_residual_scan=False))
-                progress(i + 1, total, _eta("Anonymisieren und prüfen", started, i + 1, total))
-        else:
-            with pool:
-                futures = {}
-                for i, doc in enumerate(case.documents):
-                    job = AnonymiseJob(str(self.store.folder(case.id) / doc.stored),
-                                       str(targets[i]), i, total, registry.docs[i],
-                                       registry.state_for_document(i), settings)
-                    futures[pool.submit(anonymise_task, job)] = i
-                for n, future in enumerate(as_completed(futures), 1):
-                    i = futures[future]
-                    try:
-                        processed, mentions, boxes, pages = future.result()
-                    except Exception as exc:  # noqa: BLE001 - name the broken file
-                        raise RuntimeError(f"{case.documents[i].name}: {exc}") from exc
-                    registry.replace_document_results(i, mentions, boxes)
-                    registry.docs[i] = pages
-                    finish(i, processed)
-                    progress(n, total, _eta("Anonymisieren und prüfen", started, n, total))
+                source = self.store.folder(case.id) / case.documents[i].stored
+                try:
+                    finish(i, anonymise_document(source, targets[i], i, registry.docs[i],
+                                                 registry, settings,
+                                                 self._progress_fn(case, prefix),
+                                                 run_residual_scan=False))
+                except Exception as exc:  # noqa: BLE001
+                    fail(i, exc)
+                step()
 
         # Detection gaps found by the verification become training examples.
         if settings.use_learning:
@@ -398,6 +566,19 @@ class Worker:
         self.store.save_registry(case.id, registry)
         for i in range(total):
             self.store.save_pages(case.id, i, registry.docs[i])
+        produced = [d for d in case.documents if d.output]
+        if not produced:
+            case.status = "fehler"
+            errors = [d.error for d in case.documents if d.error]
+            case.error = errors[0] if errors else "Es konnte kein Dokument anonymisiert werden."
+            case.progress = {"done": 0, "total": 0, "step": ""}
+            self.store.save(case)
+            try:
+                out_dir.rmdir()  # nothing was written
+            except OSError:
+                pass
+            return
+        case.mapping = ""
         if settings.write_mapping:
             confidential = out_dir / "VERTRAULICH_nicht_weitergeben"
             confidential.mkdir(exist_ok=True)
@@ -407,6 +588,15 @@ class Worker:
         case.status = "fertig"
         case.progress = {"done": 1, "total": 1, "step": "Fertig"}
         self.store.save(case)
+
+
+def _move(source: Path, target: Path) -> Path:
+    """Move a file, replacing an existing target."""
+    try:
+        target.unlink(missing_ok=True)
+    except OSError:
+        pass
+    return Path(shutil.move(str(source), str(target)))
 
 
 def _eta(step: str, started: float, done: int, total: int) -> str:

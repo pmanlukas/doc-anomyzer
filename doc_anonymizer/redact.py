@@ -26,7 +26,7 @@ from typing import Callable
 import pymupdf
 
 from .config import Settings
-from .extract import open_pdf
+from .extract import effective_dpi, open_pdf
 from .models import ManualBox, PageInfo, Word
 from .registry import CaseRegistry
 from .textmap import PageText
@@ -357,7 +357,8 @@ def _rebuild_as_image(out: pymupdf.Document, page: pymupdf.Page, plan: PagePlan,
                       registry: CaseRegistry, doc_index: int, info: PageInfo,
                       settings: Settings) -> None:
     """Replace a page by an image of itself plus a clean, invisible text layer."""
-    pix = page.get_pixmap(dpi=settings.raster_dpi, alpha=False)
+    zoom = effective_dpi(page, settings.raster_dpi) / 72
+    pix = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom), alpha=False)
     new = out.new_page(width=page.rect.width, height=page.rect.height)
     # JPEG keeps hundreds of pages small; quality 80 is easily readable.
     new.insert_image(new.rect, stream=pix.tobytes("jpeg", jpg_quality=80))

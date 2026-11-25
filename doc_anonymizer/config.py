@@ -40,7 +40,18 @@ def home_dir() -> Path:
         base = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "DocAnonymizer"
     else:
         base = Path.home() / ".doc_anonymizer"
-    base.mkdir(parents=True, exist_ok=True)
+    # Private to the user (other accounts on a shared computer must not read
+    # case files, settings or the access token). On Windows the profile
+    # folder already is; elsewhere the mode is set explicitly.
+    base.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if os.name == "posix":
+        # A folder from an older version (or created by someone else) may be
+        # readable for other accounts – tighten it once.
+        try:
+            if base.stat().st_mode & 0o077:
+                base.chmod(0o700)
+        except OSError:
+            pass
     return base
 
 
@@ -126,6 +137,13 @@ class Settings:
     write_mapping: bool = True
     #: Folder for finished files.
     output_dir: str = field(default_factory=lambda: str(default_output_dir()))
+    #: Working data of a case (copies of the *original* documents, the list
+    #: of found names) is deleted automatically after this many days without
+    #: activity; 0 = keep until deleted by hand. Finished files are not touched.
+    keep_days: int = 30
+    #: Open the program in its own window (Microsoft Edge "app" window)
+    #: instead of a tab of the default browser.
+    app_window: bool = True
     #: Terms that must never be redacted (one per entry, case-insensitive).
     allow_terms: list[str] = field(default_factory=list)
     #: Terms that must always be redacted: list of {"text": ..., "category": ...}.
@@ -144,16 +162,26 @@ class Settings:
             raw = json.loads(cls.path().read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return cls()
+        if not isinstance(raw, dict):
+            return cls()
         known = {k: v for k, v in raw.items() if k in cls.__dataclass_fields__}
-        settings = cls(**known)
+        try:
+            settings = cls(**known)
+        except TypeError:
+            return cls()
         # Guard against unknown category names from older versions.
         valid = {c.value for c in Category}
         settings.categories = [c for c in settings.categories if c in valid]
         return settings
 
     def save(self) -> None:
-        self.path().write_text(json.dumps(asdict(self), indent=2, ensure_ascii=False),
-                               encoding="utf-8")
+        # Written to a temporary file first: a crash while writing must not
+        # leave a broken settings file behind.
+        path = self.path()
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(asdict(self), indent=2, ensure_ascii=False),
+                       encoding="utf-8")
+        tmp.replace(path)
 
     def enabled(self, category: Category) -> bool:
         return category is Category.MANUAL or category.value in self.categories

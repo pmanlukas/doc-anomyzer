@@ -44,6 +44,9 @@ def _e(text: object) -> str:
 def _page(title: str, body: str) -> str:
     return (f"<!doctype html><html lang='de'><head><meta charset='utf-8'>"
             f"<meta name='viewport' content='width=device-width,initial-scale=1'>"
+            # The report is plain text and a table: no scripts, no external content.
+            f"<meta http-equiv='Content-Security-Policy' "
+            f"content=\"default-src 'none'; style-src 'unsafe-inline'\">"
             f"<title>{_e(title)}</title><style>{_STYLE}</style></head><body>{body}</body></html>")
 
 

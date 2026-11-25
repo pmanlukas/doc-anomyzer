@@ -95,7 +95,7 @@ $pid2 = (Get-Content (Join-Path $UserData "server.json") -Raw | ConvertFrom-Json
 Check ($pid1 -eq $pid2 -and -not $first.HasExited) "weiterhin genau ein Server (Prozess $pid1)"
 
 Step "Anonymisieren über das laufende Programm (parallele Verarbeitung)"
-& python "$PSScriptRoot\api_smoke_test.py" $port @files
+& python "$PSScriptRoot\api_smoke_test.py" (Join-Path $UserData "server.json") @files
 Check ($LASTEXITCODE -eq 0) "Akte über die Oberfläche (API) anonymisiert, alle Prüfstufen bestanden"
 
 Step "Beenden"

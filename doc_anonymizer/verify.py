@@ -31,7 +31,7 @@ import regex as re
 from . import ocr
 from .config import Settings
 from .detect.pipeline import Detector
-from .extract import clean_word, render_page
+from .extract import clean_word, image_scale, render_page
 from .forensics import forensic_check
 from .parallel import ocr_threads
 from .detect.patterns import NUMERIC_IBAN_COUNTRIES
@@ -407,11 +407,10 @@ def _image_check(doc: pymupdf.Document, terms, settings: Settings,
 
     Pages are processed in small blocks (memory) and OCR'd in parallel.
     """
-    scale = 72 / settings.ocr_dpi
     raster = raster or set()
 
     def read(job) -> list[Word]:
-        image, raster = job
+        image, raster, scale = job
         if not raster:
             # Text pages: one "sparse text" pass finds everything visible; small
             # print of the text layer is covered completely by stage 1.
@@ -429,7 +428,9 @@ def _image_check(doc: pymupdf.Document, terms, settings: Settings,
         todo = [n for n in range(doc.page_count) if only is None or n in only]
         for first in range(0, len(todo), block):
             numbers = todo[first:first + block]
-            jobs = [(render_page(doc[n], settings.ocr_dpi), n in raster) for n in numbers]
+            images = [render_page(doc[n], settings.ocr_dpi) for n in numbers]
+            jobs = [(image, n in raster, image_scale(doc[n], image))
+                    for n, image in zip(numbers, images)]
             for number, boxes in zip(numbers, pool.map(read, jobs)):
                 result.ocr_pages_checked += 1
                 words = [w.text for w in boxes]

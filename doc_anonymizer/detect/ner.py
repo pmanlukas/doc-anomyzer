@@ -42,6 +42,17 @@ class SpacyResult:
     proper_noun_spans: list[tuple[int, int]] = field(default_factory=list)
 
 
+def spacy_installed() -> bool:
+    """Is a German language model installed? (Cheap – does not load it.)"""
+    import importlib.util
+
+    from ..config import custom_model_dir
+
+    if (custom_model_dir() / "meta.json").exists():
+        return True
+    return any(importlib.util.find_spec(name) is not None for name in SPACY_MODELS)
+
+
 @lru_cache(maxsize=1)
 def load_spacy():
     """Load the best installed German spaCy model (cached)."""

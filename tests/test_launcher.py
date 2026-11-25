@@ -1,10 +1,13 @@
-"""Start/stop behaviour of the installed program (doc_anonymizer.launcher)."""
+"""Start/stop behaviour and access protection of the installed program."""
 
+import http.server
 import json
 import os
 import subprocess
 import sys
+import threading
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -14,32 +17,42 @@ ROOT = Path(__file__).resolve().parent.parent
 _LOCAL = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
-def _start(home: Path, idle: int = 60, grace: int = 60) -> subprocess.Popen:
-    env = dict(os.environ, DOC_ANONYMIZER_HOME=str(home),
-               DOC_ANONYMIZER_IDLE_SECONDS=str(idle), DOC_ANONYMIZER_STARTUP_SECONDS=str(grace))
+def _env(home: Path, **extra) -> dict:
+    return dict(os.environ, DOC_ANONYMIZER_HOME=str(home), DOC_ANONYMIZER_NO_DIALOG="1",
+                **{k: str(v) for k, v in extra.items()})
+
+
+def _start(home: Path, idle: int = 60, grace: int = 60, close: int = 60) -> subprocess.Popen:
+    env = _env(home, DOC_ANONYMIZER_IDLE_SECONDS=idle, DOC_ANONYMIZER_STARTUP_SECONDS=grace,
+               DOC_ANONYMIZER_CLOSE_SECONDS=close)
     return subprocess.Popen([sys.executable, "-m", "doc_anonymizer.launcher", "--kein-browser"],
                             cwd=ROOT, env=env)
 
 
-def _port(home: Path, timeout: float = 60) -> int:
+def _state(home: Path, timeout: float = 60) -> dict:
+    """Port and token of the started server (waits until it answers)."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
-            port = json.loads((home / "server.json").read_text())["port"]
-            with _LOCAL.open(f"http://127.0.0.1:{port}/api/ping", timeout=2) as r:
+            state = json.loads((home / "server.json").read_text())
+            with _LOCAL.open(f"http://127.0.0.1:{state['port']}/api/ping", timeout=2) as r:
                 if json.loads(r.read())["app"] == "dokumenten-anonymisierer":
-                    return port
+                    return state
         except (OSError, ValueError, KeyError):
             pass
         time.sleep(0.3)
     raise AssertionError("Server ist nicht gestartet")
 
 
-def _post(port: int, path: str, body: dict | None = None) -> int:
-    req = urllib.request.Request(f"http://127.0.0.1:{port}{path}", method="POST",
-                                 data=json.dumps(body or {}).encode(),
-                                 headers={"X-Anonymizer": "1",
-                                          "Content-Type": "application/json"})
+def _request(state: dict, method: str, path: str, body: dict | None = None,
+             token: str | None = "") -> int:
+    headers = {"X-Anonymizer": "1", "Content-Type": "application/json"}
+    token = state["token"] if token == "" else token
+    if token:
+        headers["X-Anonymizer-Token"] = token
+    req = urllib.request.Request(f"http://127.0.0.1:{state['port']}{path}", method=method,
+                                 data=json.dumps(body or {}).encode() if method != "GET" else None,
+                                 headers=headers)
     try:
         with _LOCAL.open(req, timeout=5) as r:
             return r.status
@@ -55,34 +68,106 @@ def home(tmp_path):
 def test_single_instance_and_stop(home):
     server = _start(home)
     try:
-        port = _port(home)
+        state = _state(home)
         # A second start finds the running program and ends at once.
         second = _start(home)
         assert second.wait(timeout=30) == 0
         assert server.poll() is None
         assert json.loads((home / "server.json").read_text())["pid"] == server.pid
         # "--beenden" (used by setup/uninstall) ends the program.
-        env = dict(os.environ, DOC_ANONYMIZER_HOME=str(home))
         subprocess.run([sys.executable, "-m", "doc_anonymizer.launcher", "--beenden"],
-                       cwd=ROOT, env=env, timeout=60, check=True)
+                       cwd=ROOT, env=_env(home), timeout=60, check=True)
         assert server.wait(timeout=30) == 0
         assert not (home / "server.json").exists()
-        assert port
+        assert state["port"]
     finally:
         server.kill()
+
+
+def test_access_needs_the_token(home):
+    """Other users/programs on the computer cannot use the running program."""
+    server = _start(home)
+    try:
+        state = _state(home)
+        assert len(state["token"]) >= 32
+        assert _request(state, "GET", "/api/cases") == 200
+        assert _request(state, "GET", "/api/cases", token=None) == 401
+        assert _request(state, "GET", "/api/cases", token="falsch") == 401
+        assert _request(state, "POST", "/api/shutdown", token=None) == 401
+        assert _request(state, "GET", "/api/settings", token=None) == 401
+        assert server.poll() is None
+        if os.name == "posix":  # the token file is private to the user
+            assert (home / "server.json").stat().st_mode & 0o077 == 0
+            assert home.stat().st_mode & 0o077 == 0
+        # The log never contains the token.
+        log = (home / "logs" / "programm.log").read_text(encoding="utf-8")
+        assert state["token"] not in log
+    finally:
+        server.kill()
+
+
+def test_foreign_program_on_the_port_is_not_trusted(home):
+    """A program that imitates the ping answer does not get the token."""
+    from doc_anonymizer import launcher
+
+    received = []
+
+    class Fake(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802
+            received.append((self.path, dict(self.headers)))
+            body = json.dumps({"app": "dokumenten-anonymisierer", "version": "9"}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    fake = http.server.HTTPServer(("127.0.0.1", 0), Fake)
+    threading.Thread(target=fake.serve_forever, daemon=True).start()
+    try:
+        # (DOC_ANONYMIZER_HOME points to ``home`` – see conftest.private_home)
+        home.mkdir(parents=True, exist_ok=True)
+        (home / "server.json").write_text(json.dumps(
+            {"port": fake.server_address[1], "pid": 1, "token": "geheimes-token-1234567890"}))
+        assert launcher.running() is None
+        assert received, "the fake server was asked"
+        assert all("geheimes-token" not in path and "geheimes-token" not in str(headers)
+                   for path, headers in received)
+    finally:
+        fake.shutdown()
 
 
 def test_ends_itself_without_open_page(home):
     server = _start(home, idle=4, grace=4)
     try:
-        port = _port(home)
+        state = _state(home)
         # Signs of life keep it running ...
         for _ in range(4):
-            assert _post(port, "/api/heartbeat") == 200
+            assert _request(state, "POST", "/api/heartbeat") == 200
             time.sleep(2)
         assert server.poll() is None
-        # ... without them it ends by itself (watchdog checks every 10 s).
+        # ... without them it ends by itself.
         assert server.wait(timeout=40) == 0
+    finally:
+        server.kill()
+
+
+def test_ends_soon_after_the_window_was_closed(home):
+    server = _start(home, close=3)
+    try:
+        state = _state(home)
+        assert _request(state, "POST", "/api/heartbeat") == 200
+        assert _request(state, "POST", "/api/bye") == 200
+        # A reload says goodbye as well – the new page's requests cancel it.
+        time.sleep(1.5)
+        assert _request(state, "POST", "/api/heartbeat") == 200
+        time.sleep(4)
+        assert server.poll() is None
+        assert _request(state, "POST", "/api/bye") == 200
+        assert server.wait(timeout=30) == 0
     finally:
         server.kill()
 
@@ -90,8 +175,8 @@ def test_ends_itself_without_open_page(home):
 def test_quit_button_endpoint(home):
     server = _start(home)
     try:
-        port = _port(home)
-        assert _post(port, "/api/shutdown", {}) == 200
+        state = _state(home)
+        assert _request(state, "POST", "/api/shutdown", {}) == 200
         assert server.wait(timeout=30) == 0
     finally:
         server.kill()

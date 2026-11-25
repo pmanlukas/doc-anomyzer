@@ -37,6 +37,9 @@ from .config import Settings
 
 log = logging.getLogger(__name__)
 
+#: Embedded images above this size are not decoded for the image check.
+MAX_IMAGE_PIXELS = 120_000_000
+
 #: Keys that must not appear in an anonymised file (hidden text/data carriers).
 SUSPICIOUS_KEYS = ("/ActualText", "/Alt ", "/Alt(", "/Alt<", "/StructTreeRoot", "/PieceInfo",
                    "/EmbeddedFile", "/JavaScript", "/AcroForm", "/Thumb", "/OpenAction",
@@ -196,6 +199,13 @@ def _image_ocr(doc: pymupdf.Document, terms, settings: Settings, skip_pages: set
             if xref in seen:
                 continue
             seen.add(xref)
+            if img[2] * img[3] > MAX_IMAGE_PIXELS:
+                # Too large to decode safely (plans, "bomb" images): cannot be
+                # checked, so the page is re-built as a plain image instead.
+                result.findings.append(Finding(
+                    "Bild-OCR (Bild zu groß für die Prüfung – Seite wird neu aufgebaut)",
+                    "", "", page.number + 1))
+                continue
             try:
                 pix = pymupdf.Pixmap(doc, xref)
                 if pix.width < 60 or pix.height < 20:

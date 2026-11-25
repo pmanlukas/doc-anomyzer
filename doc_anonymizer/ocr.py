@@ -16,6 +16,7 @@ from pathlib import Path
 from PIL import Image
 
 from .config import BUNDLED_TESSERACT, MODELS_DIR
+from .errors import UserError
 from .models import Word
 
 # Typical installation folders of the UB Mannheim Windows build.
@@ -32,7 +33,7 @@ _WINDOWS_CANDIDATES = [
 os.environ.setdefault("OMP_THREAD_LIMIT", "1")
 
 
-class OcrUnavailableError(RuntimeError):
+class OcrUnavailableError(UserError):
     """Raised when a scanned page has to be processed but Tesseract is missing."""
 
 

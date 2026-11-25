@@ -24,11 +24,14 @@ import logging
 import multiprocessing
 import os
 import sys
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures.process import BrokenProcessPool
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 from .config import Settings
+from .errors import WorkerCrashed
 
 log = logging.getLogger(__name__)
 
@@ -87,11 +90,12 @@ def _init_worker(ocr_threads_per_worker: int, home: str) -> None:
     logging.basicConfig(level=logging.WARNING)
 
 
-def make_pool(documents: int) -> ProcessPoolExecutor | None:
+def make_pool(documents: int, workers: int | None = None) -> ProcessPoolExecutor | None:
     """A process pool – or ``None`` if parallel processing is not worthwhile."""
-    workers = worker_count(documents)
-    if workers < 2:
-        return None
+    if workers is None:
+        workers = worker_count(documents)
+        if workers < 2:
+            return None
     from .config import home_dir
     from .detect.ner import prepare_known_words
 
@@ -105,6 +109,57 @@ def make_pool(documents: int) -> ProcessPoolExecutor | None:
     return ProcessPoolExecutor(max_workers=workers, mp_context=context,
                                initializer=_init_worker,
                                initargs=(threads, str(home_dir())))
+
+
+def run_in_pool(jobs: list[tuple[int, Callable, tuple]],
+                on_result: Callable[[int, object], None],
+                on_error: Callable[[int, BaseException], None]) -> bool:
+    """Run ``jobs`` (index, function, arguments) in worker processes.
+
+    A document must never take the whole batch down:
+
+    * an exception in one job is reported for that job only,
+    * if a worker process *dies* (memory exhausted, crash inside a native
+      library on a damaged PDF), the pool is unusable – the jobs that were
+      not finished are then repeated one by one, each in a fresh process, so
+      only the document that really causes the crash fails.
+
+    Returns ``False`` if no pool could be used (caller processes in-process).
+    """
+    pool = make_pool(len(jobs))
+    if pool is None:
+        return False
+    pending = {index: (fn, args) for index, fn, args in jobs}
+    broken = False
+    with pool:
+        futures = {pool.submit(fn, *args): index for index, (fn, args) in pending.items()}
+        for future in as_completed(futures):
+            index = futures[future]
+            try:
+                result = future.result()
+            except BrokenProcessPool:
+                broken = True  # every unfinished future fails the same way
+                continue
+            except Exception as exc:  # noqa: BLE001 - reported per document
+                pending.pop(index)
+                on_error(index, exc)
+                continue
+            pending.pop(index)
+            on_result(index, result)
+    if broken:
+        log.warning("worker process died – repeating %d document(s) one by one", len(pending))
+        for index, (fn, args) in sorted(pending.items()):
+            single = make_pool(1, workers=1)
+            try:
+                with single:
+                    result = single.submit(fn, *args).result()
+            except BrokenProcessPool:
+                on_error(index, WorkerCrashed())
+            except Exception as exc:  # noqa: BLE001
+                on_error(index, exc)
+            else:
+                on_result(index, result)
+    return True
 
 
 # ----------------------------------------------------------------- tasks

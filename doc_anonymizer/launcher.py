@@ -2,11 +2,16 @@
 
 Runs with ``pythonw.exe`` – without a console window:
 
-* If the program is already running, only the browser is opened (no second
-  server, no port conflict).
-* Otherwise the local server starts on a free port and the browser opens.
-* The server ends itself when no browser page has been open for a few
-  minutes (the page sends a sign of life every 30 seconds) and no job is
+* If the program is already running, only its window is opened again (no
+  second server, no port conflict).
+* Otherwise the local server starts on a free port and the window opens:
+  a window of its own (Microsoft Edge in "app" mode, without address bar
+  and tabs) or, if Edge is not available, a tab of the default browser.
+* Access is protected by a random token created at every start. It is
+  handed to the window in its address and stored for a second start in
+  ``server.json`` inside the user's private application folder.
+* The server ends itself shortly after the window has been closed, or when
+  no page has given a sign of life for a while – never while a job is
   running. Nothing has to be kept open and nothing has to be closed.
 * Problems are shown as a German Windows message; details go to the log
   file ``%LOCALAPPDATA%\\DocAnonymizer\\logs\\programm.log``.
@@ -22,7 +27,9 @@ import json
 import logging
 import logging.handlers
 import os
+import secrets
 import socket
+import subprocess
 import sys
 import threading
 import time
@@ -36,8 +43,12 @@ APP_TITLE = "Dokumenten-Anonymisierer"
 #: Ports tried one after another (the first free one is used).
 PORTS = range(8765, 8785)
 #: The server stops after this many seconds without a sign of life from a
-#: browser page (and without a running job).
-IDLE_SECONDS = int(os.environ.get("DOC_ANONYMIZER_IDLE_SECONDS", 5 * 60))
+#: page (and without a running job). Browsers put background tabs to sleep,
+#: so this is generous; a closed window is noticed much earlier (below).
+IDLE_SECONDS = int(os.environ.get("DOC_ANONYMIZER_IDLE_SECONDS", 15 * 60))
+#: ... and this many seconds after the last page said it is being closed.
+#: (Longer than the sign-of-life interval of a second, still open window.)
+CLOSE_GRACE_SECONDS = int(os.environ.get("DOC_ANONYMIZER_CLOSE_SECONDS", 90))
 #: Before the first page has connected, the browser gets more time.
 STARTUP_GRACE_SECONDS = int(os.environ.get("DOC_ANONYMIZER_STARTUP_SECONDS", 10 * 60))
 
@@ -111,9 +122,10 @@ def _get(url: str, timeout: float = 2.0) -> dict | None:
         return None
 
 
-def _post(url: str, timeout: float = 5.0) -> bool:
-    request = urllib.request.Request(url, data=b"{}", method="POST",
+def _post(url: str, token: str, body: dict | None = None, timeout: float = 5.0) -> bool:
+    request = urllib.request.Request(url, data=json.dumps(body or {}).encode(), method="POST",
                                      headers={"X-Anonymizer": "1",
+                                              "X-Anonymizer-Token": token,
                                               "Content-Type": "application/json"})
     try:
         with _LOCAL.open(request, timeout=timeout):
@@ -122,25 +134,72 @@ def _post(url: str, timeout: float = 5.0) -> bool:
         return False
 
 
-def running_url() -> str | None:
-    """URL of an already running instance (checked, not just remembered)."""
+def read_state() -> dict | None:
+    """Port and token of the server this user started (unverified)."""
     try:
-        port = int(json.loads(state_file().read_text(encoding="utf-8"))["port"])
+        state = json.loads(state_file().read_text(encoding="utf-8"))
+        return {"port": int(state["port"]), "token": str(state["token"]),
+                "pid": int(state.get("pid", 0))}
     except (OSError, ValueError, KeyError, TypeError):
         return None
-    url = f"http://127.0.0.1:{port}/"
-    data = _get(url + "api/ping")
-    return url if data and data.get("app") == "dokumenten-anonymisierer" else None
 
 
-def _free_port() -> int:
+def write_state(port: int, token: str, version: str) -> None:
+    """Store port and token – readable by this user only."""
+    path = state_file()
+    data = json.dumps({"port": port, "pid": os.getpid(), "version": version, "token": token})
+    path.unlink(missing_ok=True)
+    # 0600 where the system supports it; on Windows the profile folder's
+    # access rights already exclude other users.
+    handle = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(handle, "w", encoding="utf-8") as fh:
+        fh.write(data)
+
+
+def running() -> tuple[str, str] | None:
+    """(base URL, token) of an already running instance – verified.
+
+    The answer must prove knowledge of the token (challenge/response), so a
+    foreign program that happens to listen on the remembered port is never
+    mistaken for this one – and never receives the token.
+    """
+    from .web import ping_proof
+
+    state = read_state()
+    if state is None:
+        return None
+    url = f"http://127.0.0.1:{state['port']}/"
+    challenge = secrets.token_hex(16)
+    data = _get(f"{url}api/ping?c={challenge}")
+    if not data or data.get("app") != "dokumenten-anonymisierer":
+        return None
+    if not secrets.compare_digest(str(data.get("proof", "")),
+                                  ping_proof(state["token"], challenge)):
+        return None
+    return url, state["token"]
+
+
+def running_url() -> str | None:
+    """Base URL of the running instance (``None`` if there is none)."""
+    found = running()
+    return found[0] if found else None
+
+
+def _listen_socket() -> tuple[socket.socket, int]:
+    """Bind the first free port – exclusively.
+
+    On Windows a second program could otherwise bind the same port
+    (``SO_REUSEADDR`` semantics) and intercept requests.
+    """
     for port in PORTS:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-            try:
-                sock.bind(("127.0.0.1", port))
-                return port
-            except OSError:
-                continue
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            if sys.platform.startswith("win"):
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+            sock.bind(("127.0.0.1", port))
+            return sock, port
+        except OSError:
+            sock.close()
     raise PortError()
 
 
@@ -174,14 +233,57 @@ class _InstanceLock:
             return False
 
 
-def open_browser(url: str) -> None:
-    log.info("Browser öffnen: %s", url)
+def _find_edge() -> str | None:
+    """Path of Microsoft Edge (part of Windows 10/11)."""
+    if not sys.platform.startswith("win"):
+        return None
+    candidates = [Path(os.environ.get(var, "")) / "Microsoft" / "Edge" / "Application" /
+                  "msedge.exe" for var in ("ProgramFiles(x86)", "ProgramFiles", "LOCALAPPDATA")
+                  if os.environ.get(var)]
     try:
-        webbrowser.open(url)
+        import winreg
+
+        key = r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\msedge.exe"
+        for root in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+            try:
+                with winreg.OpenKey(root, key) as handle:
+                    candidates.insert(0, Path(winreg.QueryValue(handle, None)))
+            except OSError:
+                continue
+    except ImportError:
+        pass
+    return next((str(path) for path in candidates if path.is_file()), None)
+
+
+def open_window(base_url: str, token: str) -> None:
+    """Show the program: own window if possible, otherwise a browser tab."""
+    url = f"{base_url}?token={token}"
+    log.info("Fenster öffnen: %s", base_url)  # never log the token
+    app_window = True
+    try:
+        from .config import Settings
+
+        app_window = Settings.load().app_window
+    except Exception:  # noqa: BLE001 - settings must never block the start
+        pass
+    edge = _find_edge() if app_window else None
+    if edge:
+        try:
+            subprocess.Popen([edge, f"--app={url}", "--no-first-run",  # noqa: S603
+                              "--window-size=1500,950"],
+                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL, close_fds=True)
+            return
+        except OSError:
+            log.exception("Edge konnte nicht gestartet werden – Standardbrowser wird benutzt")
+    try:
+        if not webbrowser.open(url):
+            raise OSError("kein Browser gefunden")
     except Exception:  # noqa: BLE001 - the user can still type the address
         log.exception("Browser konnte nicht geöffnet werden")
-        show_message("Der Browser konnte nicht automatisch geöffnet werden.\n\n"
-                     f"Bitte im Browser diese Adresse eingeben:\n{url}", error=False)
+        show_message("Das Programmfenster konnte nicht automatisch geöffnet werden.\n\n"
+                     "Bitte einen Browser (z. B. Microsoft Edge) installieren bzw. als "
+                     "Standardbrowser festlegen und das Programm erneut starten.", error=True)
 
 
 def _wait_for(predicate, seconds: float) -> bool:
@@ -202,26 +304,34 @@ def serve(open_page: bool = True) -> None:
     from . import __version__
     from .web import create_app
 
-    port = _free_port()
+    sock, port = _listen_socket()
+    token = secrets.token_urlsafe(32)
     stop_event = threading.Event()
-    app = create_app(managed=True, on_shutdown=stop_event.set)
+    app = create_app(managed=True, on_shutdown=stop_event.set, token=token)
     worker = app.extensions["anonymizer"]["worker"]
-    server = create_server(app, host="127.0.0.1", port=port, threads=8,
+    server = create_server(app, sockets=[sock], threads=8,
                            max_request_body_size=2 * 1024 ** 3)
     url = f"http://127.0.0.1:{port}/"
-    state_file().write_text(json.dumps({"port": port, "pid": os.getpid(),
-                                        "version": __version__}), encoding="utf-8")
+    write_state(port, token, __version__)
     log.info("Server gestartet: %s (Version %s, Prozess %s)", url, __version__, os.getpid())
 
     def watchdog() -> None:
         started = time.monotonic()
-        while not stop_event.wait(10):
+        while not stop_event.wait(5):
             life = app.extensions["anonymizer"]["life"]
-            seen = life["last_seen"]
+            if worker and worker.busy:
+                continue  # never end while documents are being processed
+            now = time.monotonic()
+            closed = life["closed"]
+            if closed is not None and now - closed > CLOSE_GRACE_SECONDS:
+                log.info("Fenster wurde geschlossen – Programm wird beendet.")
+                stop_event.set()
+                continue
             limit = IDLE_SECONDS if life["connected"] else STARTUP_GRACE_SECONDS
-            idle = time.monotonic() - (seen or started)
-            if idle > limit and not (worker and worker.busy):
-                log.info("Seit %d s keine geöffnete Seite – Programm wird beendet.", idle)
+            idle = now - (life["last_seen"] or started)
+            if idle > limit:
+                log.info("Seit %d s kein Lebenszeichen einer Seite – Programm wird beendet.",
+                         idle)
                 stop_event.set()
         _shutdown()
 
@@ -239,17 +349,20 @@ def serve(open_page: bool = True) -> None:
     threading.Thread(target=watchdog, name="watchdog", daemon=True).start()
     if open_page:
         threading.Thread(target=lambda: _wait_for(lambda: running_url() == url, 30)
-                         and open_browser(url), name="browser", daemon=True).start()
+                         and open_window(url, token), name="window", daemon=True).start()
     server.run()
 
 
 def stop_running() -> bool:
     """Ask a running instance to end (used by setup/uninstall)."""
-    url = running_url()
-    if not url:
+    found = running()
+    if not found:
         return False
-    _post(url + "api/shutdown")
-    _wait_for(lambda: running_url() is None, 20)
+    url, token = found
+    # Used by setup and uninstall: ends the program even while it is working
+    # (its files are about to be replaced or removed).
+    _post(url + "api/shutdown", token, {"trotzdem": True})
+    _wait_for(lambda: running() is None, 20)
     return True
 
 
@@ -285,19 +398,20 @@ def main(argv: list[str] | None = None) -> int:
             stop_running()  # nothing running is fine as well
             return 0
         open_page = "--kein-browser" not in argv
-        url = running_url()
-        if url:
-            log.info("Läuft bereits – nur Browser öffnen.")
+        found = running()
+        if found:
+            log.info("Läuft bereits – nur das Fenster öffnen.")
             if open_page:
-                open_browser(url)
+                open_window(*found)
             return 0
         lock = _InstanceLock()
         if not lock.acquire():
             # Another start is just in progress (double click): wait for it.
             log.info("Start läuft bereits – warte auf den Server.")
-            if _wait_for(lambda: running_url() is not None, 90):
-                if open_page:
-                    open_browser(running_url())
+            if _wait_for(lambda: running() is not None, 90):
+                found = running()
+                if open_page and found:
+                    open_window(*found)
                 return 0
             show_message("Das Programm startet bereits. Bitte einen Moment warten und dann "
                          "noch einmal auf das Symbol klicken.", error=False)

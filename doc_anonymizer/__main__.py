@@ -17,24 +17,27 @@ from pathlib import Path
 
 
 def _serve(port: int, open_browser: bool) -> None:
+    import secrets
+
     from .web import create_app
 
-    app = create_app()
-    url = f"http://127.0.0.1:{port}/"
-    print("=" * 64)
+    # Access token: only the browser opened with this address may use the
+    # program (protects against other users and programs on this computer).
+    token = secrets.token_urlsafe(32)
+    app = create_app(token=token)
+    url = f"http://127.0.0.1:{port}/?token={token}"
+    print("=" * 72)
     print(" Dokumenten-Anonymisierer läuft – nur auf diesem Computer.")
-    print(f" Im Browser öffnen: {url}")
+    print(" Im Browser öffnen (die Adresse enthält den Zugangsschlüssel):")
+    print(f"   {url}")
     print(" Zum Beenden dieses Fenster schließen (oder Strg+C).")
-    print("=" * 64)
+    print("=" * 72)
     if open_browser:
         threading.Timer(1.5, lambda: webbrowser.open(url)).start()
-    try:
-        from waitress import serve
+    from waitress import serve
 
-        # Only the loopback interface: unreachable from other computers.
-        serve(app, host="127.0.0.1", port=port, threads=8, max_request_body_size=2 * 1024 ** 3)
-    except ImportError:
-        app.run(host="127.0.0.1", port=port, threaded=True)
+    # Only the loopback interface: unreachable from other computers.
+    serve(app, host="127.0.0.1", port=port, threads=8, max_request_body_size=2 * 1024 ** 3)
 
 
 def _check() -> int:
