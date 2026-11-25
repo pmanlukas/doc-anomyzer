@@ -81,9 +81,10 @@ def _init_worker(ocr_threads_per_worker: int, home: str) -> None:
     os.environ["DOC_ANONYMIZER_OCR_THREADS"] = str(ocr_threads_per_worker)
     os.environ["DOC_ANONYMIZER_HOME"] = home
     os.environ.setdefault("OMP_THREAD_LIMIT", "1")
-    from .config import quiet_subprocesses
+    from .config import private_temp_dir, quiet_subprocesses
 
     quiet_subprocesses()
+    private_temp_dir()  # page images for Tesseract: not in the shared temp folder
     # Started from pythonw.exe (installed program): there is no console, so
     # stdout/stderr are None – libraries writing to them must not crash.
     if sys.stdout is None:

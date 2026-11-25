@@ -24,7 +24,7 @@ import regex as re
 from . import learning
 from .config import Settings
 from .detect.persons import PARTICLES, split_name
-from .lexicon import is_keep_prefix, is_stopword
+from .lexicon import is_field_label, is_keep_prefix, is_stopword
 from .models import Category, Detection, Entity, ManualBox, Mention, PageInfo
 from .textmap import PageText
 
@@ -477,6 +477,15 @@ class CaseRegistry:
                     if hits is None and word.source == "ocr" and misread_candidate(raw):
                         match = fuzzy.match(key)
                         hits = tokens.get(match) if match else None
+                    if hits is None and "-" in raw and not is_field_label(raw) \
+                            and not is_stopword(raw):
+                        # "das Mustermann-Gutachten": a known surname as part
+                        # of a compound. The whole word goes (what remains of
+                        # it could be the rest of a double name). First names
+                        # are left alone: "Max-Planck-Institut".
+                        hits = next((tokens[part] for part in map(normalise, raw.split("-"))
+                                     if len(part) >= 3 and part in tokens
+                                     and tokens[part][0][1] == "surname"), None)
                     if not hits:
                         continue
                     entity, form = hits[0]

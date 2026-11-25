@@ -35,7 +35,7 @@ from .extract import clean_word, image_scale, render_page
 from .forensics import forensic_check
 from .parallel import ocr_threads
 from .detect.patterns import NUMERIC_IBAN_COUNTRIES
-from .lexicon import is_keep_prefix, is_stopword
+from .lexicon import is_field_label, is_first_name, is_keep_prefix, is_stopword
 from .models import Category, PageInfo, Word
 from .registry import (CaseRegistry, FuzzyIndex, levenshtein_at_most, misread_candidate,
                        normalise)
@@ -215,6 +215,9 @@ def _contains(hay: Haystack, term: str, compact: bool,
     * numbers are compared without spaces/punctuation (``DE89 3704…``),
     * names must occur as capitalised words (the surname "Lange" is not
       found in the adverb "lange"), also in the genitive ("Langes"),
+    * a name inside a hyphenated compound counts ("das Mustermann-Gutachten")
+      – unless the compound is the label of a form field: the surname
+      "Steuer" does not occur in "Steuer-ID",
     * occurrences right after a court/authority word are allowed
       ("Landgericht Musterstadt").
     """
@@ -225,11 +228,18 @@ def _contains(hay: Haystack, term: str, compact: bool,
     if key not in hay.norm:
         return False  # fast path: most terms do not occur at all
     words = [re.escape(w) for w in term.split()]
-    # A hyphen followed by a letter continues the word: the surname "Steuer"
-    # does not occur in "Steuer-ID".
-    pattern = (r"(?<![\p{L}\p{N}])(?<!\p{L}-)" + r"\s+".join(words)
-               + r"(?:s|['’]s)?(?![\p{L}\p{N}])(?!-\p{L})")
+    pattern = (r"(?<![\p{L}\p{N}])" + r"\s+".join(words)
+               + r"(?:s|['’]s)?(?![\p{L}\p{N}])")
     for match in re.finditer(pattern, hay.raw, re.IGNORECASE):
+        compound = _compound_around(hay.raw, match.start(), match.end())
+        if compound:
+            if category not in _NAME_CATEGORIES:
+                continue  # part of a longer expression, not this term
+            # (Digits removed: the OCR reads "Steuer-ID" as "Steuer-1ID".)
+            if is_field_label(re.sub(r"\d", "", compound)) or is_stopword(compound):
+                continue
+            if category is Category.PERSON and is_first_name(term):
+                continue  # "Max-Planck-Institut" is not the client Max
         if category in _NAME_CATEGORIES and not match.group(0)[:1].isupper():
             # Lower case only counts inside e-mail/web addresses
             # ("bekir.weihmann@…") – not the adverb "lange" for "Lange".
@@ -282,6 +292,19 @@ def name_leaks(stem: str, terms) -> list[tuple[str, str, Category]]:
     return found
 
 
+def _compound_around(text: str, start: int, end: int) -> str:
+    """The hyphenated word a match is part of ("Steuer" in "Steuer-ID"), else ""."""
+    before = start >= 2 and text[start - 1] == "-" and text[start - 2].isalpha()
+    after = end + 1 < len(text) and text[end] == "-" and text[end + 1].isalnum()
+    if not before and not after:
+        return ""
+    while start > 0 and not text[start - 1].isspace():
+        start -= 1
+    while end < len(text) and not text[end].isspace():
+        end += 1
+    return text[start:end].strip(".,;:()„“\"'")
+
+
 def _fuzzy_hits(words: list[str], index: FuzzyIndex) -> set[str]:
     """OCR text: names that occur with one/two misread characters."""
     hits = set()
@@ -292,6 +315,30 @@ def _fuzzy_hits(words: list[str], index: FuzzyIndex) -> set[str]:
         if match:
             hits.add(match)
     return hits
+
+
+def _ocr_text(words: list[Word]) -> list[str]:
+    """OCR words as text, with split compounds joined again.
+
+    Tesseract sometimes cuts "Steuer-ID" into "Steuer-" and "ID". For the
+    search this must stay *one* word – otherwise the label would count as the
+    surname "Steuer". Joined only where the two parts touch (no real space in
+    between): "Mustermann - Kläger" stays three words.
+    """
+    out: list[str] = []
+    previous: Word | None = None
+    for word in words:
+        text = word.text
+        if previous is not None and out and word.line_id == previous.line_id and len(text) > 1 \
+                and len(previous.text) > 1 and (previous.text.endswith("-") or text.startswith("-")):
+            char_width = (previous.x1 - previous.x0) / max(len(previous.text), 1)
+            if word.x0 - previous.x1 < 0.6 * char_width:
+                out[-1] += text
+                previous = word
+                continue
+        out.append(text)
+        previous = word
+    return out
 
 
 def _leak_boxes(words: list[Word], term: str) -> list[list[float]]:
@@ -496,7 +543,7 @@ def _image_check(doc: pymupdf.Document, terms, settings: Settings,
                     for n, image in zip(numbers, images)]
             for number, boxes in zip(numbers, pool.map(read, jobs)):
                 result.ocr_pages_checked += 1
-                words = [w.text for w in boxes]
+                words = _ocr_text(boxes)
                 hay = Haystack(" ".join(words))
                 fuzzy_found = _fuzzy_hits(words, fuzzy)
                 for term, entity_id, category, compact in terms:

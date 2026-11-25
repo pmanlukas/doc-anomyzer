@@ -360,3 +360,43 @@ def test_file_name_check_is_strict():
                  "brief_muller_final"):
         assert name_leaks(stem, terms), stem
     assert name_leaks("Klageschrift_anonymisiert", terms) == []
+
+
+# ------------------------------------------------------------ temporary files
+
+def test_page_images_for_ocr_stay_in_the_private_folder(tmp_path, monkeypatch, private_home):
+    """Tesseract gets every page as an image file – not in the shared temp folder."""
+    import tempfile
+
+    import pytesseract
+    from PIL import Image
+
+    from doc_anonymizer import ocr
+    from doc_anonymizer.config import private_temp_dir
+
+    if not ocr.is_available():
+        pytest.skip("Tesseract nicht installiert")
+    monkeypatch.setattr(tempfile, "tempdir", None)  # restored after the test
+    before = dict(os.environ)
+    folder = private_temp_dir(clean=True)
+    assert folder == private_home / "tmp" and tempfile.gettempdir() == str(folder)
+    assert dict(os.environ) == before  # started programs keep their own temp folder
+
+    seen = []
+    original = pytesseract.pytesseract.run_tesseract
+
+    def spy(input_filename, *args, **kwargs):
+        seen.append(input_filename)
+        return original(input_filename, *args, **kwargs)
+
+    monkeypatch.setattr(pytesseract.pytesseract, "run_tesseract", spy)
+    ocr.ocr_words(Image.new("L", (300, 120), 255), 1.0)
+    assert seen and all(os.path.dirname(name) == str(folder) for name in seen)
+    assert os.listdir(folder) == []  # removed after use
+
+    # Worker processes do the same when they start.
+    monkeypatch.setattr(tempfile, "tempdir", None)
+    for name in ("DOC_ANONYMIZER_OCR_THREADS", "DOC_ANONYMIZER_HOME", "OMP_THREAD_LIMIT"):
+        monkeypatch.setenv(name, os.environ.get(name, "1"))
+    parallel._init_worker(1, str(private_home))
+    assert tempfile.gettempdir() == str(folder)

@@ -82,3 +82,18 @@ def test_postcode_and_place_separated_by_a_line_break():
     assert not any("12345" in t for t in found(text).get("ADDRESS", ()))
     text = "Kosten laut Anlage, 12345\nEuro insgesamt"
     assert not any("Euro" in t for t in found(text).get("ADDRESS", ()))
+
+
+def test_section_sign_misread_by_ocr_is_restored():
+    from doc_anonymizer.models import Word
+    from doc_anonymizer.ocr import _restore_section_signs
+
+    def line(text, line_id=1):
+        return [Word(10 * n, 0, 10 * n + 8, 10, t, "ocr", line_id) for n, t in enumerate(text.split())]
+
+    words = line("Kündigungsfrist gemäß S 622 Abs. 2 BGB zum Monatsende")
+    _restore_section_signs(words)
+    assert " ".join(w.text for w in words) == "Kündigungsfrist gemäß § 622 Abs. 2 BGB zum Monatsende"
+    words = line("siehe S 12 der Akte")  # a page, not a section
+    _restore_section_signs(words)
+    assert words[1].text == "S"

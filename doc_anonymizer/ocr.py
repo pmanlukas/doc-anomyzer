@@ -156,4 +156,29 @@ def ocr_words(image: Image.Image, scale: float, language: str = "deu+eng",
                    + data["line_num"][i])
         words.append(Word(x * scale, y * scale, (x + w) * scale, (y + h) * scale,
                           text, "ocr", psm * 1_000_000 + line_id, max(conf, 0.0)))
+    _restore_section_signs(words)
     return words
+
+
+#: Abbreviations of German statutes that follow a section number.
+_STATUTES = {"BGB", "ZPO", "StGB", "StPO", "HGB", "GG", "SGB", "KSchG", "AO", "UStG", "EStG",
+             "VwGO", "VwVfG", "InsO", "BetrVG", "ArbGG", "GKG", "RVG", "DSGVO", "BDSG", "StVG",
+             "StVO", "VVG", "WEG", "AGG", "TzBfG", "GmbHG", "AktG", "UWG", "BauGB", "FamFG",
+             "GVG", "OWiG", "EGBGB", "BUrlG", "MuSchG", "ArbZG", "EFZG", "GewO", "BeurkG"}
+
+
+def _restore_section_signs(words: list[Word]) -> None:
+    """Tesseract sometimes reads "§" as "S": "S 622 BGB" -> "§ 622 BGB".
+
+    Only where a number and (within the next words of the line) a statute
+    follow – "S 12" alone may be a page reference.
+    """
+    for i, word in enumerate(words):
+        if word.text != "S" or i + 1 >= len(words) or not words[i + 1].text[:1].isdigit():
+            continue
+        for later in words[i + 2:i + 7]:
+            if later.line_id != word.line_id:
+                break
+            if later.text.strip(".,;:()") in _STATUTES:
+                word.text = "§"
+                break

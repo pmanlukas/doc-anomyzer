@@ -81,7 +81,13 @@ def atomic_write_text(path: Path, text: str) -> None:
 def private_temp_dir(clean: bool = False) -> Path:
     """Temporary files of the program (page images for the text recognition,
     uploads in transit) – inside the private folder instead of the shared
-    system temp folder. ``clean`` empties it (program start/end)."""
+    system temp folder. ``clean`` empties it (program start/end).
+
+    Only this Python process is redirected (worker processes call this
+    themselves). The environment is left alone: programs started from here –
+    the browser window, the PDF viewer – keep their normal temp folder, which
+    must not disappear when this program ends.
+    """
     import shutil
     import tempfile
 
@@ -89,8 +95,6 @@ def private_temp_dir(clean: bool = False) -> Path:
     if clean:
         shutil.rmtree(path, ignore_errors=True)
     path.mkdir(parents=True, exist_ok=True, mode=0o700)
-    for name in ("TMPDIR", "TEMP", "TMP"):  # inherited by worker processes and Tesseract
-        os.environ[name] = str(path)
     tempfile.tempdir = str(path)
     return path
 
