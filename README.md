@@ -305,22 +305,36 @@ python -m tests.evaluate --anzahl 24 --scan                      # digital + Sca
 python -m tests.evaluate --anzahl 12 --nur-scans --qualitaet schlecht
 ```
 
-Messwerte (Stand dieser Version, ohne GLiNER, 4 CPU-Kerne):
+Messwerte (Version 0.2.0, ohne GLiNER, 4 CPU-Kerne, genaue OCR-Sprachdateien
+`tessdata_best` wie im Setup; ohne jede Nutzerentscheidung – unsichere
+Vorschläge bleiben dabei unbeantwortet):
 
 | Testlauf | Eingefügte Angaben | Entfernt | Prüfung |
 |---|---|---|---|
 | 24 gemischte Akten (⅓ Scans guter Qualität) | 292 | **100 %** | bestanden |
+| 36 gemischte Akten, zweiter Datensatz | 438 | **100 %** | bestanden |
 | 12 Scans mittlerer Qualität | 146 | **100 %** | bestanden |
 | 12 Scans schlechter Qualität (150 dpi, verwaschen, schief) | 146 | **100 %** | bestanden |
-| 12 Scans sehr schlechter Qualität (Fax-Niveau, 120 dpi) | 146 | 97,3–98,6 % (je nach Stichprobe) | Seiten als „schlecht lesbar“ zur Sichtprüfung markiert |
-| 1 Akte, 300 Seiten digital | 3 128 | **100 %** | bestanden, 4,7 min |
-| 1 Akte, 100 Seiten Scan schlechter Qualität | 1 042 | **100 %** | 2 OCR-Fehltreffer zur Nutzerentscheidung, 6,5 min |
+| 12 Scans sehr schlechter Qualität (Fax-Niveau, 120 dpi) | 146 | 96,6–98,6 % (je nach Stichprobe) | Seiten als „schlecht lesbar“ zur Sichtprüfung markiert |
+| 1 Akte, 300 Seiten digital | 3 128 | **100 %** | bestanden, 3,7 min, alle Seiten bleiben Text |
+| 1 Akte, 100 Seiten Scan schlechter Qualität | 1 042 | 99,8 % (2 von der Texterkennung verstümmelte Kleinschreibungen) | **als „nicht bestanden“ gemeldet** – Sichtprüfung nötig; 9,4 min |
 
-**Durchsatz** (Stapel aus 300 kurzen Dokumenten, 350 Seiten, davon ⅓ Scans;
-4 CPU-Kerne): **6,6 Minuten** = ca. 45 Dokumente pro Minute bzw. ca. 2 700
-pro Stunde, inklusive aller vier Prüfstufen; 300 von 300 bestanden. Die Dokumente werden auf mehrere
-Prozesse verteilt; mit mehr Kernen steigt der Durchsatz entsprechend
-(Arbeitsspeicher: ca. 2 GB + 0,5 GB je zusätzlichem Kern).
+**Durchsatz** (4 CPU-Kerne, inklusive aller vier Prüfstufen):
+
+* 90 kurze Dokumente (105 Seiten, davon ⅓ Scans): **3,2 Minuten** ≈ 29 Dokumente
+  pro Minute; 90 von 90 bestanden.
+* 300 kurze Dokumente in *einer* Akte (350 Seiten, davon ⅓ Scans):
+  **ca. 12,5 Minuten** ≈ 24 Dokumente pro Minute bzw. ca. 1 400 pro Stunde;
+  300 von 300 bestanden. (Je größer die Akte, desto mehr Suchbegriffe prüft
+  jede Prüfstufe – hier 4 673 je Dokument.)
+
+Die Zeiten hängen stark vom Rechner und von der Texterkennung ab; die im
+Setup enthaltenen genauen OCR-Sprachdateien sind etwa halb so schnell wie
+die einfachen. Auf demselben Rechner ist diese Version durch die
+zusätzlichen Prüfungen (Sichtbarkeit, Bilddaten) rund 6 % langsamer als
+die Vorversion (189 s statt 178 s für die 90 Dokumente). Die Dokumente
+werden auf mehrere Prozesse verteilt; mit mehr Kernen steigt der Durchsatz
+entsprechend (Arbeitsspeicher: ca. 2 GB + 0,5 GB je zusätzlichem Kern).
 
 **Unterschriften** (`tests/signature_docs.py`: erfundene Briefe mit
 synthetischen Unterschriften in blauer/schwarzer Tinte, nach Grußformeln,
@@ -340,8 +354,10 @@ Auf echten Dokumenten (ein Scan mit Unterschrift und Gerichtssiegel, ein
 Word-PDF mit Logo) wurden Unterschrift und Siegel gefunden, ohne Fehlalarm.
 
 Wichtig: Wo die automatische Prüfung noch etwas findet, meldet das Programm
-„nicht bestanden“ und fordert zur Entscheidung auf – es gibt kein stilles
-Durchrutschen.
+„nicht bestanden“, legt das Ergebnis getrennt ab und fordert zur Entscheidung
+auf. Was aber keine Texterkennung lesen kann (sehr schlechte Scans), kann
+auch die Prüfung nicht finden – solche Seiten werden deshalb als „schlecht
+lesbar“ markiert und müssen selbst angesehen werden.
 
 ## 9. Grenzen – bitte beachten
 
