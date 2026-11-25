@@ -170,6 +170,10 @@ def iban_fragments(text: str) -> list[str]:
     return found
 
 
+#: Placeholder of an e-mail/web address directly after / before a word.
+_BESIDE_ADDRESS_AFTER = re.compile(r"[\s.,;:<(]{0,3}\[(?:E-Mail|Webadresse) \d+\]")
+_BESIDE_ADDRESS_BEFORE = re.compile(r"\[(?:E-Mail|Webadresse) \d+\][\s.,;:>)]{0,3}$")
+
 #: Categories whose terms are proper names: in German always capitalised.
 _NAME_CATEGORIES = {Category.PERSON, Category.LOCATION, Category.ORG, Category.OTHER_NAME}
 #: Names of courts and authorities stay readable ("Amtsgericht Köln") – the
@@ -237,9 +241,13 @@ def _contains(hay: Haystack, term: str, compact: bool,
             continue  # part of a longer expression, not this term
         if category in _NAME_CATEGORIES and not match.group(0)[:1].isupper():
             # Lower case only counts inside e-mail/web addresses
-            # ("bekir.weihmann@…") – not the adverb "lange" for "Lange".
+            # ("bekir.weihmann@…") – not the adverb "lange" for "Lange" – and
+            # right beside one that was replaced ("samuel [E-Mail 3]": the
+            # OCR tore the address apart, the first name stayed).
             near = hay.raw[max(0, match.start() - 1):match.end() + 2]
-            if not re.search(r"[@_]|\.\S|\S\.", near.replace(match.group(0), " ", 1)):
+            if not re.search(r"[@_]|\.\S|\S\.", near.replace(match.group(0), " ", 1)) \
+                    and not _BESIDE_ADDRESS_AFTER.match(hay.raw, match.end()) \
+                    and not _BESIDE_ADDRESS_BEFORE.search(hay.raw[:match.start()]):
                 continue
         before = hay.raw[:match.start()].rstrip().rsplit(None, 1)
         if before and category in _KEPT_AFTER_COURT and is_keep_prefix(before[-1]):

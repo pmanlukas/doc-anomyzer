@@ -197,3 +197,72 @@ def test_known_name_inside_a_finding_the_user_kept(tmp_path, settings):
     assert "Sauer" not in text
     assert result.verification.passed and result.repairs >= 1
     assert "§ 280 Abs. 1 BGB" in text
+
+
+def test_font_name_is_not_a_recovered_first_name(tmp_path, settings):
+    """A client called Roman and a PDF set in "Times-Roman": the font name in
+    the file is not a leak – and no reason to re-build every page as an image."""
+    import pymupdf
+
+    from doc_anonymizer.detect.pipeline import Detector
+    from doc_anonymizer.extract import analyse_document
+    from doc_anonymizer.process import anonymise_document
+    from doc_anonymizer.registry import CaseRegistry
+
+    doc = pymupdf.open()
+    doc.new_page().insert_textbox(
+        pymupdf.Rect(60, 60, 540, 400),
+        "In dem Rechtsstreit erklärt Herr Roman Mustermann, wohnhaft Lindenstraße 12, "
+        "80331 München, dass die Forderung aus § 280 Abs. 1 BGB unbegründet ist.",
+        fontsize=11, fontname="tiro")
+    source = tmp_path / "k.pdf"
+    doc.save(source)
+    assert b"Times-Roman" in source.read_bytes()
+    pages = analyse_document(source, settings)
+    registry = CaseRegistry([pages], settings)
+    registry.build([Detector(settings).detect_document(pages)])
+    assert any(e.given == ["Roman"] for e in registry.entities.values())
+    result = anonymise_document(source, tmp_path / "o.pdf", 0, pages, registry, settings)
+    assert result.verification.passed
+    assert result.repairs == 0 and result.redaction.raster_pages == 0
+    with pymupdf.open(tmp_path / "o.pdf") as pdf:
+        assert "Roman" not in pdf[0].get_text()
+
+
+def test_first_name_torn_off_an_email_address_by_ocr():
+    """Poor scan: "samuel.lindner@…" is read as "samuel" + ".lindner@…". The
+    lower-case first name in front of the address must go as well – and the
+    verification must notice if it did not."""
+    from doc_anonymizer.config import Settings
+    from doc_anonymizer.detect.pipeline import Detector
+    from doc_anonymizer.models import Category, PageInfo, Word
+    from doc_anonymizer.registry import CaseRegistry
+    from doc_anonymizer.verify import Haystack, _contains
+
+    lines = ["Mietvertrag zwischen Herrn Samuel Lindner und der Vermieterin.",
+             "Kontakt Mieter: samuel .lindner@gmx-beispiel.de, mobil 0151 23456789",
+             "Der Mieter wohnt seit lange im Haus."]
+    words = [Word(40 + 70 * n, 100 + 20 * i, 105 + 70 * n, 112 + 20 * i, text, "ocr", i, 90)
+             for i, line in enumerate(lines) for n, text in enumerate(line.split())]
+    pages = [PageInfo(0, 595, 842, words, kind="scan")]
+    settings = Settings(use_gliner=False)
+    registry = CaseRegistry([pages], settings)
+    registry.build([Detector(settings).detect_document(pages)])
+    redacted = {words[i].text for m in registry.mentions for i in m.word_indices}
+    assert "samuel" in redacted and "Samuel" in redacted
+
+    assert _contains(Haystack("Kontakt Mieter: samuel [E-Mail 10], mobil"), "Samuel", False,
+                     Category.PERSON)
+    assert _contains(Haystack("An: [E-Mail 4] heidrun"), "Heidrun", False, Category.PERSON)
+    # An ordinary lower-case word elsewhere is still no name.
+    assert not _contains(Haystack("seit lange im Haus, siehe [E-Mail 1]"), "Lange", False,
+                         Category.PERSON)
+
+
+def test_health_insurance_number_read_with_a_gap():
+    from doc_anonymizer.detect.patterns import detect
+    from doc_anonymizer.models import Category
+
+    found = {d.text for d in detect("Versichertennumimer: B788 104556 :", 0, set(Category))}
+    assert "B788 104556" in found
+    assert not detect("Abschnitt B788 104556 der Liste", 0, {Category.SOCIAL_SECURITY})

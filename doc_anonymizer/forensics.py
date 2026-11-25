@@ -89,6 +89,12 @@ def _content_and_font_xrefs(doc: pymupdf.Document) -> tuple[set[int], set[int]]:
     return contents, fonts
 
 
+#: Designation of a typeface inside font objects ("/BaseFont /Times-Roman",
+#: "/FontFamily (Times New Roman)"). It names the font, not anything from the
+#: document – a client called Roman is not "recovered" from "Times-Roman".
+_FONT_NAME = re.compile(r"/(?:BaseFont|FontName|FontFamily)\s*"
+                        r"(?:/[^\s/<>\[\]()]+|\((?:\\.|[^\\)])*\)|<[0-9A-Fa-f\s]*>)")
+
 _TOKEN = re.compile(r"[^\W_]{2,}")
 _HEX_STRING = re.compile(r"<([0-9A-Fa-f\s]{8,})>")
 
@@ -132,7 +138,8 @@ def _raw_object_scan(doc: pymupdf.Document, terms, result: ForensicResult) -> No
             continue
         try:
             obj = doc.xref_object(xref, compressed=False)
-            data = obj.encode("latin-1", "replace")
+            data = (_FONT_NAME.sub(" ", obj) if "/Font" in obj else obj).encode(
+                "latin-1", "replace")
             if doc.xref_is_stream(xref) and "/Image" not in obj:
                 stream = doc.xref_stream(xref) or b""
                 if xref in contents:

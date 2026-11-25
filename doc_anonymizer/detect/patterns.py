@@ -216,6 +216,11 @@ RULES: list[Rule] = [
          _r(r"\b\d{2}[ .]?\d{6}[ .]?[A-Za-z][ .]?\d{3}\b")),
     Rule("health_insurance", Category.SOCIAL_SECURITY,
          _r(r"\b[A-Z]\d{9}\b")),
+    Rule("health_insurance_spaced", Category.SOCIAL_SECURITY,
+         # The same number as read from poor scans: "B788 104556". Only after
+         # a label that – however misread – starts like "Versicherten…".
+         _r(r"(?i:Versich\p{L}{3,16}|KV-?Nr|KVNR)\.?[: ]{1,3}([A-Z] ?\d(?: ?\d){8})(?!\d)"),
+         group=1),
     Rule("id_document", Category.ID_DOCUMENT,
          _r(r"(?:Personalausweis|Ausweis|Reisepass|Pass|Aufenthaltstitel|Führerschein|Dokument)"
             r"(?:-?(?:nummer|nr\.?))?[: ]*(?:Nr\.?:? ?)?((?=[A-Z0-9]*\d)[A-Z0-9]{6,12})\b",

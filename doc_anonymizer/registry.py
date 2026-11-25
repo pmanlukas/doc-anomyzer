@@ -457,6 +457,7 @@ class CaseRegistry:
         for d, pages in enumerate(self.docs):
             for p, page in enumerate(pages):
                 covered = self._covered_set(d, p)
+                beside_address = self._beside_address(d, p)
                 for idx, word in enumerate(page.words):
                     if idx in covered:
                         continue
@@ -469,8 +470,12 @@ class CaseRegistry:
                         if hit:
                             self._add_mention(d, p, [idx], hit[0][0], "full")
                         continue
-                    if not raw[:1].isupper() and not _rare_lowercase_name(raw, tokens):
-                        continue  # names are capitalised (also "MUSTERMANN")
+                    if not raw[:1].isupper() and not _rare_lowercase_name(raw, tokens) \
+                            and idx not in beside_address:
+                        # Names are capitalised (also "MUSTERMANN") – except
+                        # next to an e-mail address the OCR tore apart
+                        # ("samuel" + ".lindner@…").
+                        continue
                     key = normalise(raw)
                     hits = tokens.get(key)
                     if hits is None and len(key) > 3:
@@ -502,6 +507,27 @@ class CaseRegistry:
                     if entity.category is Category.PERSON and "weitergabe" not in entity.sources:
                         entity.sources.append("weitergabe")
         self._merge_adjacent_person_mentions()
+
+    def _beside_address(self, doc: int, page: int) -> set[int]:
+        """Words directly before/after an e-mail or web address (reading order).
+
+        Poor scans: the OCR sometimes splits "samuel.lindner@gmx.de" into
+        "samuel" and the rest. The rest is found as e-mail address; the first
+        name in front of it is lower case and would stay.
+        """
+        words = self.docs[doc][page].words
+        addresses = {i for m in self.mentions if m.doc == doc and m.page == page
+                     and self.entities[m.entity_id].category in (Category.EMAIL, Category.URL)
+                     for i in m.word_indices}
+        addresses |= {i for i, w in enumerate(words) if "@" in w.text}
+        if not addresses:
+            return set()
+        order = self.page_text(doc, page).order
+        beside = set()
+        for pos, idx in enumerate(order):
+            if idx in addresses:
+                beside.update(order[max(pos - 1, 0):pos + 2])
+        return beside - addresses
 
     def _weak_guesses_to_persons(self) -> None:
         """Model guesses like "Kambs" = organisation that are known names.
@@ -760,10 +786,12 @@ class CaseRegistry:
             for p, _page in enumerate(pages):
                 ptext = self.page_text(d, p)
                 covered = self._covered_set(d, p)
+                beside_address = self._beside_address(d, p) if whole_words and names else set()
                 for match in pattern.finditer(ptext.text):
-                    if whole_words and names and not match.group(0)[:1].isupper():
-                        continue
                     words = ptext.words_for_span(match.start(), match.end())
+                    if whole_words and names and not match.group(0)[:1].isupper() \
+                            and not beside_address.intersection(words):
+                        continue
                     if whole_words:
                         # Same rule as the verification (see is_harmless_compound).
                         compound = compound_around(ptext.text, match.start(), match.end())
