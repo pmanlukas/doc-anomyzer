@@ -75,6 +75,32 @@ def is_stopword(token: str) -> bool:
     return bool(_base_forms(token) & stopwords()) or is_field_label(token)
 
 
+def compound_around(text: str, start: int, end: int) -> str:
+    """The hyphenated word a match is part of ("Steuer" in "Steuer-ID"), else ""."""
+    before = start >= 2 and text[start - 1] == "-" and text[start - 2].isalpha()
+    after = end + 1 < len(text) and text[end] == "-" and text[end + 1].isalnum()
+    if not before and not after:
+        return ""
+    while start > 0 and not text[start - 1].isspace():
+        start -= 1
+    while end < len(text) and not text[end].isspace():
+        end += 1
+    return text[start:end].strip(".,;:()„“\"'")
+
+
+def is_harmless_compound(compound: str, term: str, person: bool) -> bool:
+    """A name found inside a hyphenated word that is *not* this name.
+
+    "Steuer-ID" is the label of a form field, not the surname "Steuer"
+    (digits ignored: the OCR reads it as "Steuer-1ID"); "Max-Planck-Institut"
+    is not the client Max. Everything else counts: "das Mustermann-Gutachten".
+    The detection, the verification and the automatic repair all use this
+    one rule – what one of them calls a leak, the others can fix.
+    """
+    return (is_field_label(re.sub(r"\d", "", compound)) or is_stopword(compound)
+            or (person and is_first_name(term)))
+
+
 def is_keep_prefix(token: str) -> bool:
     """Courts/authorities ("Amtsgericht", also inflected "Bundesgerichtshofs")."""
     return bool(_base_forms(token.strip(".,:;()")) & keep_prefixes())

@@ -24,7 +24,8 @@ import regex as re
 from . import learning
 from .config import Settings
 from .detect.persons import PARTICLES, split_name
-from .lexicon import is_field_label, is_keep_prefix, is_stopword
+from .lexicon import (compound_around, is_field_label, is_harmless_compound, is_keep_prefix,
+                      is_stopword)
 from .models import Category, Detection, Entity, ManualBox, Mention, PageInfo
 from .textmap import PageText
 
@@ -751,8 +752,7 @@ class CaseRegistry:
             return
         body = r"\s+".join(re.escape(p) for p in parts)
         if whole_words:
-            body = (r"(?<![\p{L}\p{N}])(?<!\p{L}-)" + body
-                    + r"(?:s|['’]s)?(?![\p{L}\p{N}])(?!-\p{L})")
+            body = r"(?<![\p{L}\p{N}])" + body + r"(?:s|['’]s)?(?![\p{L}\p{N}])"
         pattern = re.compile(body, re.IGNORECASE)
         names = entity.category in (Category.PERSON, Category.LOCATION, Category.ORG,
                                     Category.OTHER_NAME)
@@ -763,10 +763,33 @@ class CaseRegistry:
                 for match in pattern.finditer(ptext.text):
                     if whole_words and names and not match.group(0)[:1].isupper():
                         continue
-                    words = [w for w in ptext.words_for_span(match.start(), match.end())
-                             if w not in covered]
+                    words = ptext.words_for_span(match.start(), match.end())
+                    if whole_words:
+                        # Same rule as the verification (see is_harmless_compound).
+                        compound = compound_around(ptext.text, match.start(), match.end())
+                        if compound and (not names or is_harmless_compound(
+                                compound, term or entity.original,
+                                entity.category is Category.PERSON)):
+                            continue
+                        # A finding the user (or the default) left readable
+                        # must not keep a known name readable inside it.
+                        self._release_disabled(d, p, words)
+                    words = [w for w in words if w not in covered]
                     if words:
                         self._add_mention(d, p, words, entity)
+
+    def _release_disabled(self, doc: int, page: int, words: list[int]) -> None:
+        """Drop mentions of switched-off entities that cover ``words``."""
+        wanted = set(words)
+        kept = [m for m in self.mentions
+                if not (m.doc == doc and m.page == page and wanted.intersection(m.word_indices)
+                        and not self.entities[m.entity_id].enabled)]
+        if len(kept) != len(self.mentions):
+            self.mentions = kept
+            covered = self._covered_set(doc, page)
+            covered.clear()
+            covered.update(i for m in kept if m.doc == doc and m.page == page
+                           for i in m.word_indices)
 
     def mark_uncertain(self) -> None:
         """Flag findings the user should decide on.

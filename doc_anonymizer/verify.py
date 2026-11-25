@@ -35,7 +35,7 @@ from .extract import clean_word, image_scale, render_page
 from .forensics import forensic_check
 from .parallel import ocr_threads
 from .detect.patterns import NUMERIC_IBAN_COUNTRIES
-from .lexicon import is_field_label, is_first_name, is_keep_prefix, is_stopword
+from .lexicon import compound_around, is_harmless_compound, is_keep_prefix, is_stopword
 from .models import Category, PageInfo, Word
 from .registry import (CaseRegistry, FuzzyIndex, levenshtein_at_most, misread_candidate,
                        normalise)
@@ -231,15 +231,10 @@ def _contains(hay: Haystack, term: str, compact: bool,
     pattern = (r"(?<![\p{L}\p{N}])" + r"\s+".join(words)
                + r"(?:s|['’]s)?(?![\p{L}\p{N}])")
     for match in re.finditer(pattern, hay.raw, re.IGNORECASE):
-        compound = _compound_around(hay.raw, match.start(), match.end())
-        if compound:
-            if category not in _NAME_CATEGORIES:
-                continue  # part of a longer expression, not this term
-            # (Digits removed: the OCR reads "Steuer-ID" as "Steuer-1ID".)
-            if is_field_label(re.sub(r"\d", "", compound)) or is_stopword(compound):
-                continue
-            if category is Category.PERSON and is_first_name(term):
-                continue  # "Max-Planck-Institut" is not the client Max
+        compound = compound_around(hay.raw, match.start(), match.end())
+        if compound and (category not in _NAME_CATEGORIES or is_harmless_compound(
+                compound, term, category is Category.PERSON)):
+            continue  # part of a longer expression, not this term
         if category in _NAME_CATEGORIES and not match.group(0)[:1].isupper():
             # Lower case only counts inside e-mail/web addresses
             # ("bekir.weihmann@…") – not the adverb "lange" for "Lange".
@@ -290,19 +285,6 @@ def name_leaks(stem: str, terms) -> list[tuple[str, str, Category]]:
         if hit:
             found.append((term, entity_id, category))
     return found
-
-
-def _compound_around(text: str, start: int, end: int) -> str:
-    """The hyphenated word a match is part of ("Steuer" in "Steuer-ID"), else ""."""
-    before = start >= 2 and text[start - 1] == "-" and text[start - 2].isalpha()
-    after = end + 1 < len(text) and text[end] == "-" and text[end + 1].isalnum()
-    if not before and not after:
-        return ""
-    while start > 0 and not text[start - 1].isspace():
-        start -= 1
-    while end < len(text) and not text[end].isspace():
-        end += 1
-    return text[start:end].strip(".,;:()„“\"'")
 
 
 def _fuzzy_hits(words: list[str], index: FuzzyIndex) -> set[str]:

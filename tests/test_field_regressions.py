@@ -157,3 +157,43 @@ def test_name_inside_a_hyphenated_compound(tmp_path, settings):
     assert _contains(hay, "Mustermann", False, Category.PERSON)
     assert not _contains(hay, "Steuer", False, Category.PERSON)
     assert not _contains(hay, "Max", False, Category.PERSON)
+
+
+def test_known_name_inside_a_finding_the_user_kept(tmp_path, settings):
+    """A street named after somebody with the client's surname was left
+    readable (uncertain finding, not confirmed). The verification must not
+    just report the surname – the automatic repair has to remove it."""
+    import pymupdf
+
+    from doc_anonymizer.detect.pipeline import Detector
+    from doc_anonymizer.extract import analyse_document
+    from doc_anonymizer.models import Category
+    from doc_anonymizer.process import anonymise_document
+    from doc_anonymizer.registry import CaseRegistry
+
+    doc = pymupdf.open()
+    doc.new_page().insert_textbox(
+        pymupdf.Rect(60, 60, 540, 400),
+        "In dem Rechtsstreit erklärt Herr Amir Sauer, dass die Forderung unbegründet ist.\n\n"
+        "Die Beklagte ist wohnhaft Brit-Sauer-Platz 2075 und bestreitet den Anspruch aus "
+        "§ 280 Abs. 1 BGB.", fontsize=11)
+    source = tmp_path / "k.pdf"
+    doc.save(source)
+    pages = analyse_document(source, settings)
+    registry = CaseRegistry([pages], settings)
+    registry.build([Detector(settings).detect_document(pages)])
+    # The state found in a large test run: the word belongs to a finding
+    # that is switched off.
+    index = next(i for i, w in enumerate(pages[0].words) if "Sauer-Platz" in w.text)
+    registry.mentions = [m for m in registry.mentions if index not in m.word_indices]
+    registry._recompute_covered()
+    street = registry.add_term("Brit-Sauer-Platz", Category.LOCATION)
+    street.enabled = False
+    assert any(index in m.word_indices and m.entity_id == street.id for m in registry.mentions)
+
+    result = anonymise_document(source, tmp_path / "o.pdf", 0, pages, registry, settings)
+    with pymupdf.open(tmp_path / "o.pdf") as pdf:
+        text = " ".join(pdf[0].get_text().split())
+    assert "Sauer" not in text
+    assert result.verification.passed and result.repairs >= 1
+    assert "§ 280 Abs. 1 BGB" in text
