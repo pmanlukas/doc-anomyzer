@@ -51,8 +51,8 @@ Installation.
   Die Prüfsumme belegt nur, dass die Datei vollständig und unverändert
   angekommen ist – nicht, von wem sie stammt.
 * **Voraussetzung:** ein öffentlich abrufbares Release (siehe
-  „Veröffentlichen“ unten). Solange das Repository privat ist, findet die
-  Zeile nichts.
+  „Veröffentlichen“ unten). Bei einem privaten Repository findet die Zeile
+  nichts.
 * **Hilft nicht** auf Rechnern, die nur signierte Programme zulassen (Smart
   App Control unter Windows 11, AppLocker/WDAC in Firmennetzen) – das Skript
   meldet dann, dass Windows den Start verhindert hat.
@@ -121,7 +121,10 @@ Versions-Tag (`git tag v0.2.0 && git push origin v0.2.0`) oder über Actions →
 Der Job `release` hängt die getestete Setup.exe, ihre Prüfsumme, `install.ps1`
 und `ANLEITUNG.txt` an das Release `v<Version>`. Eine veröffentlichte Version
 wird nie überschrieben: Eine geänderte Setup.exe braucht eine neue
-Versionsnummer (`doc_anonymizer/__init__.py`). Die PowerShell-Zeile lädt von
+Versionsnummer (`doc_anonymizer/__init__.py`). Danach führt der Job
+`release-test` die veröffentlichte Zeile auf einem frischen Windows aus
+(Download vom Release ohne Anmeldung, Prüfsumme, Einrichtung, Selbsttest) und
+prüft, dass sie die neue Version einrichtet. Die PowerShell-Zeile lädt von
 `…/releases/latest/download/`; das funktioniert ohne Anmeldung nur bei einem
 öffentlichen Repository.
 
@@ -512,6 +515,11 @@ Aufbau des Pakets `doc_anonymizer/`:
 | `launcher.py` | Start des installierten Programms (ohne Konsole, Einzelinstanz, Selbstbeenden) |
 | `installer/` | Windows-Setup (Inno Setup), Build- und Testskripte für GitHub Actions |
 
-Lizenzhinweis: PyMuPDF steht unter AGPL-3.0 (bzw. kommerzieller Lizenz von
-Artifex). Für die interne Nutzung in einer Kanzlei ist das unproblematisch; bei
-Weitergabe/Vertrieb des Programms sind die AGPL-Bedingungen zu beachten.
+Lizenzhinweis: Der eigene Quelltext steht unter der MIT-Lizenz (`LICENSE`).
+Das Setup enthält außerdem PyMuPDF unter AGPL-3.0 (bzw. kommerzieller Lizenz
+von Artifex). Für die interne Nutzung in einer Kanzlei ist das unproblematisch;
+wer das Setup weitergibt oder veröffentlicht, muss die AGPL-Bedingungen
+einhalten – insbesondere den vollständigen Quelltext zugänglich machen. Die
+Releases verweisen deshalb auf den Quelltext der jeweiligen Version in diesem
+Repository; die Lizenztexte der enthaltenen Pakete liegen im Programmordner
+(`python\Lib\site-packages\*.dist-info`).

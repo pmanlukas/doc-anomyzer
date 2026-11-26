@@ -132,6 +132,8 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: write
+    outputs:
+      version: ${{ steps.publish.outputs.version }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -139,6 +141,7 @@ jobs:
           name: Dokumenten-Anonymisierer-Setup
           path: release
       - name: Release anlegen
+        id: publish
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -171,7 +174,39 @@ jobs:
             echo "Oder \`Dokumenten-Anonymisierer-Setup.exe\` herunterladen und doppelklicken (siehe ANLEITUNG.txt)."
             echo
             echo "SHA-256 der Setup.exe: \`${actual}\`"
+            echo
+            echo "Quelltext: https://github.com/${GITHUB_REPOSITORY}/tree/${tag} - das Setup enthält PyMuPDF (AGPL-3.0);" \
+                 "die Lizenztexte der enthaltenen Python-Pakete liegen im Programmordner."
           } > notes.md
           gh release create "${tag}" --target "${GITHUB_SHA}" --title "Dokumenten-Anonymisierer ${version}" \
             --notes-file notes.md --latest \
             "${setup}" "${setup}.sha256" installer/install.ps1 ANLEITUNG.txt
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+
+  release-test:
+    # The published line itself on a fresh Windows: download from the
+    # release (no login), checksum, installation, self-check. Fails if the
+    # release cannot be fetched publicly or "latest" is not the new version.
+    needs: release
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Einrichtung mit der veröffentlichten PowerShell-Zeile
+        shell: pwsh
+        env:
+          DOC_ANONYMIZER_AUTOMATISCH: "1"
+          DOC_ANONYMIZER_NO_DIALOG: "1"
+          EXPECTED_VERSION: ${{ needs.release.outputs.version }}
+        run: |
+          $line = "irm https://github.com/${{ github.repository }}/releases/latest/download/install.ps1 | iex"
+          Write-Host $line
+          # Windows PowerShell 5.1 with the policy of a fresh Windows, as a user's window.
+          powershell.exe -NoProfile -ExecutionPolicy Restricted -Command $line
+          if ($LASTEXITCODE -ne 0) { throw "Die PowerShell-Zeile ist fehlgeschlagen (Exitcode $LASTEXITCODE)." }
+          $app = Join-Path $env:LOCALAPPDATA "Programs\Dokumenten-Anonymisierer"
+          if (-not (Test-Path "$app\python\pythonw.exe")) { throw "Das Programm wurde nicht eingerichtet." }
+          $version = & "$app\python\python.exe" -c "import doc_anonymizer; print(doc_anonymizer.__version__)"
+          Write-Host "Eingerichtete Version: $version (erwartet: $env:EXPECTED_VERSION)"
+          if ($version -ne $env:EXPECTED_VERSION) { throw "Die Zeile hat nicht die neue Version eingerichtet." }
+          & "$app\python\python.exe" -m doc_anonymizer check
+          if ($LASTEXITCODE -ne 0) { throw "Selbsttest des eingerichteten Programms fehlgeschlagen." }
