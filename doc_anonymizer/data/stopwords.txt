@@ -1,0 +1,44 @@
+# Wörter, die NIE als Name/Ort/Firma gelten sollen (Rollen, Rechtsbegriffe, Höflichkeitsformen ...).
+# Groß-/Kleinschreibung wird ignoriert. Eine Zeile pro Eintrag oder mehrere durch Leerzeichen getrennt.
+Herr Herrn Frau Fräulein Dr Prof Dipl Ing Mag Med Jur Rer Nat Phil Dres
+Kläger Klägerin Klägers Klägerinnen Beklagte Beklagter Beklagten Beklagtem
+Antragsteller Antragstellerin Antragsgegner Antragsgegnerin Berufungskläger Berufungsklägerin Berufungsbeklagte Berufungsbeklagter
+Revisionskläger Revisionsbeklagte Beschwerdeführer Beschwerdeführerin Beschwerdegegner Beigeladene Beigeladener
+Streithelfer Streithelferin Nebenintervenient Schuldner Schuldnerin Gläubiger Gläubigerin Drittschuldner Erblasser Erblasserin Erbe Erbin Erben
+Zeuge Zeugin Zeugen Sachverständige Sachverständiger Sachverständigen Gutachter Gutachterin Dolmetscher Dolmetscherin
+Angeklagte Angeklagter Angeklagten Beschuldigte Beschuldigter Beschuldigten Verteidiger Verteidigerin Nebenkläger Nebenklägerin Geschädigte Geschädigter
+Rechtsanwalt Rechtsanwältin Rechtsanwälte Rechtsanwalts Anwalt Anwältin Notar Notarin Richter Richterin Vorsitzende Vorsitzender Berichterstatter Berichterstatterin
+Staatsanwalt Staatsanwältin Rechtspfleger Rechtspflegerin Urkundsbeamter Urkundsbeamtin Gerichtsvollzieher Gerichtsvollzieherin Justizangestellte Justizbeschäftigte
+Mandant Mandantin Mandanten Mandantschaft Partei Parteien Kollege Kollegin Kollegen Geschäftsführer Geschäftsführerin Vorstand Prokurist Prokuristin Inhaber Inhaberin
+Vermieter Vermieterin Mieter Mieterin Arbeitgeber Arbeitgeberin Arbeitnehmer Arbeitnehmerin Käufer Käuferin Verkäufer Verkäuferin Auftraggeber Auftragnehmer
+Versicherungsnehmer Versicherungsnehmerin Versicherer Ehemann Ehefrau Ehegatte Ehegattin Sohn Tochter Vater Mutter Kind Kinder Bruder Schwester
+Gericht Amtsgericht Landgericht Oberlandesgericht Kammergericht Bundesgerichtshof Bundesverfassungsgericht Bundesarbeitsgericht Bundessozialgericht Bundesfinanzhof Bundesverwaltungsgericht
+Arbeitsgericht Landesarbeitsgericht Sozialgericht Landessozialgericht Verwaltungsgericht Oberverwaltungsgericht Verwaltungsgerichtshof Finanzgericht Staatsanwaltschaft Generalstaatsanwaltschaft
+Kammer Senat Zivilkammer Strafkammer Zivilsenat Strafsenat Geschäftsstelle Polizei Polizeipräsidium Jobcenter Finanzamt Ordnungsamt Jugendamt Standesamt Landratsamt Bürgeramt Ausländerbehörde
+Urteil Beschluss Verfügung Klage Klageschrift Klageerwiderung Replik Duplik Schriftsatz Antrag Anträge Berufung Revision Beschwerde Widerspruch Bescheid Vergleich Protokoll Anlage Anlagen
+Sachverhalt Tatbestand Entscheidungsgründe Gründe Begründung Hinweis Hinweise Betreff Datum Seite Seiten Ziffer Absatz Satz Nummer Gesamtschuldner Kosten Streitwert Rechtsstreit Verfahren
+Sehr Geehrte Geehrter Geehrten Liebe Lieber Hallo Mit Freundlichen Grüßen Gruß Grüße Hochachtungsvoll Anbei Bitte Danke Vielen Dank Ihr Ihre Unser Unsere
+Montag Dienstag Mittwoch Donnerstag Freitag Samstag Sonntag Januar Februar März April Mai Juni Juli August September Oktober November Dezember
+GmbH AG KG OHG UG GbR mbH eG eV SE KGaA PartG PartGmbB Co
+BGB ZPO StGB StPO HGB GG FamFG ArbGG KSchG VwGO VwVfG SGB AO InsO GVG RVG GKG WEG BetrVG UWG GWB AGG TzBfG MuSchG BUrlG EStG UStG BDSG DSGVO DS-GVO EGBGB ZVG FGG GmbHG AktG
+EUR Euro Cent Prozent Uhr Tag Tage Monat Monate Jahr Jahre Woche Wochen
+Deutschland Bundesrepublik Europa Österreich Schweiz EU
+der die das den dem des ein eine einer eines einem einen und oder sowie bzw vgl siehe gem gemäß laut nach zu zur zum von vom im in am an auf bei mit für über unter
+# Länder und Bundesländer (geringe Identifizierbarkeit, bleiben lesbar)
+Bayern Baden-Württemberg Hessen Sachsen Niedersachsen Thüringen Rheinland-Pfalz Saarland Schleswig-Holstein Mecklenburg-Vorpommern Sachsen-Anhalt Nordrhein-Westfalen
+Frankreich Italien Spanien Polen Niederlande Belgien Dänemark Tschechien Türkei Griechenland Portugal Rumänien Bulgarien Ungarn Kroatien Russland Ukraine USA Großbritannien England Luxemburg Schweden Norwegen Finnland
+Europäische Union Bundesgebiet Inland Ausland
+# Platzhalterwörter der eigenen Ersetzungen
+Person Firma Ort Adresse Telefon E-Mail Webadresse IBAN BIC Kartennummer Steuernummer SV-Nummer Ausweisnummer Kennzeichen Geburtsdatum Aktenzeichen Registernummer IP-Adresse geschwärzt
+# Weitere Gebühren- und Rechtsordnungen
+GOÄ GOZ GOA GebOÄ BRAO BORA RDG StVG StVO VVG PflVG MuSchG SGB KHEntgG BtMG ZVG JVEG FamGKG GNotKG HOAI VOB BauGB
+Rentenversicherung Krankenversicherung Krankenkasse Pflegekasse Unfallversicherung Berufsgenossenschaft Bund Länder Land
+Kanzlei Rechtsanwälte Rechtsanwaltskanzlei Praxis Klinik Klinikum Krankenhaus Hotel Bank Sparkasse Volksbank Stadtwerke
+Eingang Eingegangen Posteingang Abschrift Ausfertigung Zweitausfertigung Original Kopie Entwurf Anlage Fachanwalt Fachanwältin
+Telefon Telefax Fax Mobil Handy Internet Homepage Web Mail E-Mail Email Tel Durchwahl Zentrale Sprechzeiten Bankverbindung Konto Kontoinhaber Verwendungszweck
+# Abkürzungen von Nummern-/Zeichenfeldern in Briefköpfen und Formularen
+Personal-Nr Personal-Nr. Personalnr Personalnummer Kunden-Nr Kunden-Nr. Kundennr Kundennummer
+Vertrags-Nr Vertragsnr Vertragsnummer Mitglieds-Nr Mitgliedsnummer Rechnungs-Nr Rechnungsnr Rechnungsnummer
+Auftrags-Nr Auftragsnummer Bestell-Nr Bestellnummer Akten-Nr Aktennr Versicherungs-Nr Versicherungsnummer
+Schaden-Nr Schadennummer Policen-Nr Steuer-Nr Steuernr Tel-Nr Telefon-Nr Fax-Nr Haus-Nr Hausnr Nr Nr.
+Az Az. Gz Gz. Aktenz Aktenzeichen Geschäftszeichen Unser-Zeichen Ihr-Zeichen Zeichen

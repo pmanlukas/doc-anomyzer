@@ -1,0 +1,6 @@
+*.bat text eol=crlf
+*.cmd text eol=crlf
+ANLEITUNG.txt text eol=crlf
+*.iss text eol=crlf
+*.ps1 text eol=crlf
+installer/ANLEITUNG_ZIP.txt text eol=crlf

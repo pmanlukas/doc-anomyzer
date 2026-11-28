@@ -1,0 +1,67 @@
+﻿DOKUMENTEN-ANONYMISIERER – KURZANLEITUNG
+=========================================
+
+Das Programm schwärzt personenbezogene Daten in PDF-Dateien (Namen, Adressen,
+Kontaktdaten, Kennnummern, Geburtsdaten, Firmen, Unterschriften, Stempel).
+Es arbeitet ausschließlich auf Ihrem Computer. Es werden KEINE Dokumente ins
+Internet gesendet. Nur die einmalige Installation benötigt Internet.
+
+
+1. ENTPACKEN
+------------
+Rechtsklick auf die ZIP-Datei → „Alle extrahieren …“ → „Extrahieren“.
+Als Ziel eignet sich z. B. „Dokumente\Dokumenten-Anonymisierer“.
+Wichtig: Der Ordner darf nicht in OneDrive/Dropbox liegen.
+
+Tipp: Falls Windows später warnt, vorher einmal Rechtsklick auf die
+ZIP-Datei → „Eigenschaften“ → unten Haken bei „Zulassen“ → „OK“.
+
+
+2. INSTALLIEREN (einmalig, ca. 10–15 Minuten)
+---------------------------------------------
+Im entpackten Ordner doppelt auf „Installieren.bat“ klicken.
+
+• Erscheint „Der Computer wurde durch Windows geschützt“:
+  auf „Weitere Informationen“ und dann „Trotzdem ausführen“ klicken.
+• Fragt Windows „Möchten Sie zulassen, dass …“: mit „Ja“ bestätigen
+  (nur für die Texterkennung Tesseract).
+• Das schwarze Fenster zeigt den Fortschritt. Am Ende steht
+  „Installation abgeschlossen“. Fenster mit einer Taste schließen.
+
+Benötigt werden ca. 2 GB freier Speicher und Windows 10 oder 11.
+
+
+3. STARTEN
+----------
+Doppelklick auf „Dokumenten-Anonymisierer“ auf dem Desktop
+(oder auf „Start.bat“ im Programmordner).
+Der Browser öffnet sich mit dem Programm. Das schwarze Fenster bitte
+geöffnet lassen, solange Sie arbeiten. Zum Beenden das Fenster schließen.
+
+
+4. ARBEITEN
+-----------
+1) PDF-Dateien oder einen ganzen Ordner in das Fenster ziehen.
+2) „Prüfen“: Das Programm zeigt, was es gefunden hat. Unsichere Stellen
+   und erkannte Unterschriften/Stempel stehen oben. Mit einem Klick
+   entscheiden – oder fehlende Stellen mit der Maus einrahmen.
+3) „Anonymisieren und speichern“: Die fertigen, geprüften PDFs,
+   Prüfberichte und Textfassungen liegen im Ordner „Anonymisiert“ in Ihrem
+   Benutzerordner – je Akte ein Unterordner, der als Ganzes weitergegeben
+   werden kann.
+
+Die Zuordnungstabelle (welcher Name welche Abkürzung bekommen hat) liegt
+getrennt davon im Ordner „VERTRAULICH_nicht_weitergeben“ am selben
+Speicherort. Diesen Ordner niemals weitergeben.
+
+
+5. HILFE BEI PROBLEMEN
+----------------------
+• „Installieren.bat“ einfach noch einmal starten – bereits Installiertes
+  wird übersprungen.
+• Python lässt sich nicht installieren: Python 3.12 von
+  https://www.python.org/downloads/ installieren (Haken bei
+  „Add python.exe to PATH“) und „Installieren.bat“ erneut starten.
+• Eingescannte PDFs werden nicht gelesen: Tesseract von
+  https://github.com/UB-Mannheim/tesseract/wiki installieren.
+• Ausführliche Beschreibung: Datei „README.md“ (mit dem Editor öffnen).

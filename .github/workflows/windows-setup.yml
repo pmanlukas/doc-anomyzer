@@ -1,0 +1,212 @@
+# Builds the Windows setup (Dokumenten-Anonymisierer-Setup.exe) and tests it
+# on a fresh Windows machine: install without admin rights, self-check,
+# anonymise test PDFs, start/stop, update, uninstall.
+name: Windows-Setup
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+    paths:
+      - "doc_anonymizer/**"
+      - "installer/**"
+      - "tests/**"
+      - "requirements.txt"
+      - "ANLEITUNG.txt"
+      - ".github/workflows/windows-setup.yml"
+  workflow_dispatch:
+    inputs:
+      veroeffentlichen:
+        description: "Als Release veröffentlichen (Download-Adresse der PowerShell-Zeile)"
+        type: boolean
+        default: false
+
+# Building and testing only reads the repository; the release job below asks
+# for write access on its own.
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-setup-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  setup:
+    runs-on: windows-latest
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          architecture: x64
+
+      - name: Cache downloads (Python, Tesseract, Sprachmodell)
+        uses: actions/cache@v4
+        with:
+          path: build/downloads
+          key: downloads-${{ hashFiles('installer/build_windows.ps1') }}
+
+      - name: Werkzeuge
+        run: |
+          python -m pip install --disable-pip-version-check pillow pymupdf faker regex
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) {
+            choco install innosetup -y --no-progress
+          }
+
+      - name: Programmordner und Setup.exe bauen
+        run: ./installer/build_windows.ps1
+
+      - name: Setup testen (installieren, prüfen, anonymisieren, deinstallieren)
+        run: ./installer/test_setup.ps1
+
+      - name: Größe und Prüfsumme
+        run: |
+          $setup = Get-Item dist/Dokumenten-Anonymisierer-Setup.exe
+          $hash = (Get-FileHash $setup.FullName -Algorithm SHA256).Hash.ToLower()
+          "### Dokumenten-Anonymisierer-Setup.exe`n`n* Größe: $([math]::Round($setup.Length / 1MB)) MB`n* SHA-256: ``$hash``" |
+            Add-Content $env:GITHUB_STEP_SUMMARY
+
+      - name: Setup.exe als Artefakt hochladen
+        uses: actions/upload-artifact@v4
+        with:
+          name: Dokumenten-Anonymisierer-Setup
+          path: |
+            dist/Dokumenten-Anonymisierer-Setup.exe
+            dist/Dokumenten-Anonymisierer-Setup.exe.sha256
+            ANLEITUNG.txt
+          compression-level: 0
+          retention-days: 90
+
+      - name: Protokolle bei Fehlern
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: protokolle
+          path: |
+            build/testlogs
+            ~/AppData/Local/DocAnonymizer/logs
+          if-no-files-found: ignore
+
+  tests-windows:
+    # The test suite on Windows (paths, file locks, process start differ).
+    runs-on: windows-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Abhängigkeiten
+        run: |
+          python -m pip install --disable-pip-version-check -r requirements.txt -r requirements-dev.txt
+          python -m spacy download de_core_news_lg
+          choco install tesseract -y --no-progress
+          python -m doc_anonymizer.setup_helper tessdata
+      - name: Tests
+        env:
+          TESSERACT_CMD: C:\Program Files\Tesseract-OCR\tesseract.exe
+        run: |
+          $env:Path += ";C:\Program Files\Tesseract-OCR"
+          python -m pytest -q
+
+  release:
+    # Publishes the tested setup as a GitHub release - the address the
+    # one-line installation (installer/install.ps1) downloads from. Only on
+    # purpose: for a version tag (v1.2.3) or a manual start with the checkbox.
+    # A published version is never replaced: a changed setup needs a new
+    # version number (doc_anonymizer/__init__.py).
+    needs: [setup, tests-windows]
+    if: >-
+      startsWith(github.ref, 'refs/tags/v') ||
+      (github.event_name == 'workflow_dispatch' && inputs.veroeffentlichen)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.publish.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: Dokumenten-Anonymisierer-Setup
+          path: release
+      - name: Release anlegen
+        id: publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' doc_anonymizer/__init__.py)"
+          tag="v${version}"
+          if [[ "${GITHUB_REF}" == refs/tags/* && "${GITHUB_REF_NAME}" != "${tag}" ]]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} passt nicht zur Programmversion ${version}."
+            exit 1
+          fi
+          if gh release view "${tag}" >/dev/null 2>&1; then
+            echo "::error::Release ${tag} gibt es bereits. Bitte die Versionsnummer erhöhen."
+            exit 1
+          fi
+          # The checksum file was written on Windows (line ends with CR LF).
+          setup="$(find release -name Dokumenten-Anonymisierer-Setup.exe -print -quit)"
+          expected="$(tr -d '\r' < "${setup}.sha256" | cut -d' ' -f1)"
+          actual="$(sha256sum "${setup}" | cut -d' ' -f1)"
+          if [[ -z "${expected}" || "${expected}" != "${actual}" ]]; then
+            echo "::error::Die Prüfsumme der Setup.exe stimmt nicht mit der gebauten Datei überein."
+            exit 1
+          fi
+          {
+            echo "Einrichtung unter Windows 10/11 - eine Zeile in PowerShell (Startmenü → „PowerShell“):"
+            echo
+            echo '```'
+            echo "irm https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/install.ps1 | iex"
+            echo '```'
+            echo
+            echo "Oder \`Dokumenten-Anonymisierer-Setup.exe\` herunterladen und doppelklicken (siehe ANLEITUNG.txt)."
+            echo
+            echo "SHA-256 der Setup.exe: \`${actual}\`"
+            echo
+            echo "Quelltext: https://github.com/${GITHUB_REPOSITORY}/tree/${tag} - das Setup enthält PyMuPDF (AGPL-3.0);" \
+                 "die Lizenztexte der enthaltenen Python-Pakete liegen im Programmordner."
+          } > notes.md
+          gh release create "${tag}" --target "${GITHUB_SHA}" --title "Dokumenten-Anonymisierer ${version}" \
+            --notes-file notes.md --latest \
+            "${setup}" "${setup}.sha256" installer/install.ps1 ANLEITUNG.txt
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+
+  release-test:
+    # The published line itself on a fresh Windows: download from the
+    # release (no login), checksum, installation, self-check. Fails if the
+    # release cannot be fetched publicly or "latest" is not the new version.
+    needs: release
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Einrichtung mit der veröffentlichten PowerShell-Zeile
+        shell: pwsh
+        env:
+          DOC_ANONYMIZER_AUTOMATISCH: "1"
+          DOC_ANONYMIZER_NO_DIALOG: "1"
+          EXPECTED_VERSION: ${{ needs.release.outputs.version }}
+        run: |
+          $line = "irm https://github.com/${{ github.repository }}/releases/latest/download/install.ps1 | iex"
+          Write-Host $line
+          # Windows PowerShell 5.1 with the policy of a fresh Windows, as a user's window.
+          powershell.exe -NoProfile -ExecutionPolicy Restricted -Command $line
+          if ($LASTEXITCODE -ne 0) { throw "Die PowerShell-Zeile ist fehlgeschlagen (Exitcode $LASTEXITCODE)." }
+          $app = Join-Path $env:LOCALAPPDATA "Programs\Dokumenten-Anonymisierer"
+          if (-not (Test-Path "$app\python\pythonw.exe")) { throw "Das Programm wurde nicht eingerichtet." }
+          $version = & "$app\python\python.exe" -c "import doc_anonymizer; print(doc_anonymizer.__version__)"
+          Write-Host "Eingerichtete Version: $version (erwartet: $env:EXPECTED_VERSION)"
+          if ($version -ne $env:EXPECTED_VERSION) { throw "Die Zeile hat nicht die neue Version eingerichtet." }
+          & "$app\python\python.exe" -m doc_anonymizer check
+          if ($LASTEXITCODE -ne 0) { throw "Selbsttest des eingerichteten Programms fehlgeschlagen." }

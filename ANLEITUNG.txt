@@ -1,0 +1,101 @@
+﻿DOKUMENTEN-ANONYMISIERER – EINRICHTEN
+=====================================
+
+Das Programm entfernt personenbezogene Daten aus PDF-Dateien. Es arbeitet
+ausschließlich auf Ihrem Computer – es werden keine Dokumente ins Internet
+gesendet. Ein Administrator wird für die Einrichtung nicht benötigt.
+
+Es gibt zwei Wege. Beide richten dasselbe Programm ein.
+
+
+WEG A – eine Zeile einfügen (ohne Warnmeldung von Windows)
+----------------------------------------------------------
+1. Startmenü öffnen, „PowerShell“ eintippen und „Windows PowerShell“
+   anklicken. Es öffnet sich ein Fenster mit einer Eingabezeile.
+
+2. Die folgende Zeile kopieren, mit der rechten Maustaste in das Fenster
+   einfügen und die Eingabetaste drücken:
+
+   irm https://github.com/pmanlukas/doc-anomyzer/releases/latest/download/install.ps1 | iex
+
+3. Warten, bis „Fertig“ erscheint. Das Programm wird heruntergeladen
+   (etwa 590 MB), geprüft und eingerichtet; danach öffnet es sich von
+   selbst. Auf älteren Computern kann das Einrichten bis zu 10 Minuten
+   dauern.
+
+   Aus dem Internet geladen wird nur das Programm. Ihre Dokumente verlassen
+   den Computer nie.
+
+   Bitte beachten: Bei diesem Weg fragt Windows nicht nach. Fügen Sie eine
+   solche Zeile nur ein, wenn Sie sie aus dieser Anleitung oder von einer
+   Person haben, der Sie vertrauen.
+
+
+WEG B – Setup-Datei per Doppelklick (auch ohne Internet)
+--------------------------------------------------------
+1. Doppelklick auf „Dokumenten-Anonymisierer-Setup.exe“
+
+   Erscheint „Der Computer wurde durch Windows geschützt“:
+   auf „Weitere Informationen“ klicken, dann auf „Trotzdem ausführen“.
+   (Diese Meldung erscheint, weil das Programm nicht kostenpflichtig
+   signiert ist. Sie kommt nur beim Einrichten.)
+
+2. Auf „Installieren“ und danach auf „Fertigstellen“ klicken.
+
+   Das Einrichten dauert meist 1–2 Minuten, auf älteren Computern bis
+   zu 10. Mit dem Haken „Programm jetzt starten“ öffnet sich das
+   Programm sofort.
+
+
+DANACH – so starten Sie das Programm
+------------------------------------
+Doppelklick auf das Symbol „Dokumenten-Anonymisierer“ auf dem Desktop
+(oder im Startmenü).
+
+Das Programm öffnet sich in einem eigenen Fenster. Zum Beenden einfach
+das Fenster schließen – mehr ist nicht nötig.
+
+
+So arbeiten Sie damit
+---------------------
+1. PDF-Dateien (oder einen ganzen Ordner) in das Fenster ziehen.
+   Das Programm liest sie sofort – auch eingescannte Seiten.
+2. Kurz prüfen: Unter „Offene Fragen“ stehen nur die Stellen, bei denen
+   sich das Programm nicht sicher ist. Fehlt etwas, die Stelle auf der
+   Seite mit der Maus einrahmen.
+3. Auf „Anonymisieren und speichern“ klicken. Danach „Ordner öffnen“ –
+   dort liegen die fertigen, geprüften Dateien.
+
+Eine ausführlichere Erklärung finden Sie im Programm oben rechts unter
+„Hilfe“.
+
+
+Gut zu wissen
+-------------
+• Ergebnisse: im Ordner „Anonymisiert“ in Ihrem Benutzerordner (auf der
+  Startseite änderbar). Jede Akte erhält einen Unterordner mit Datum. Er
+  enthält nur geprüfte Dateien und kann als Ganzes weitergegeben werden.
+• Der Ordner „VERTRAULICH_nicht_weitergeben“ am selben Speicherort enthält
+  die Zuordnungstabellen (welcher Name zu welcher Abkürzung wurde).
+  Diesen Ordner niemals weitergeben oder hochladen.
+• Ins Ergebnis kommt nur, was auf den Seiten zu sehen ist: versteckter
+  Text und die Kameradaten von Fotos werden nicht übernommen.
+• Neue Version: die Zeile aus Weg A noch einmal ausführen oder die neue
+  Setup.exe starten. Akten, Einstellungen und Gelerntes bleiben erhalten.
+• Entfernen: Windows-Einstellungen → Apps → „Dokumenten-Anonymisierer“ →
+  Deinstallieren. Dabei werden Sie gefragt, ob auch die Arbeitsdaten des
+  Programms (gespeicherte Akten, Einstellungen, Gelerntes) gelöscht werden
+  sollen. Ihre fertigen Ergebnisse bleiben in jedem Fall erhalten.
+• Meldet Windows, dass die Einrichtung verhindert wurde: Auf diesem
+  Computer dürfen nur signierte Programme gestartet werden (zum Beispiel
+  durch „Smart App Control“ oder eine Vorgabe Ihrer IT). Bitte wenden Sie
+  sich an die Person, die Ihren Computer betreut.
+• Ältere Computer: Das Programm läuft ab Windows 10 mit 4 GB
+  Arbeitsspeicher (empfohlen: 8 GB). Es passt sich dem Computer an und
+  arbeitet im Hintergrund – Sie können währenddessen weiterarbeiten. Nach
+  dem Doppelklick auf das Symbol kann es bis zu einer Minute dauern, bis
+  das Fenster erscheint; bitte nicht mehrfach klicken. Große eingescannte
+  Akten brauchen Zeit: etwa 5–15 Sekunden je Seite.
+• Bei Problemen: Die Datei „programm.log“ im Ordner
+  %LOCALAPPDATA%\DocAnonymizer\logs enthält die technischen Details
+  (keine Inhalte Ihrer Dokumente).
