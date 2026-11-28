@@ -55,6 +55,9 @@ IDLE_SECONDS = int(os.environ.get("DOC_ANONYMIZER_IDLE_SECONDS", 15 * 60))
 CLOSE_GRACE_SECONDS = int(os.environ.get("DOC_ANONYMIZER_CLOSE_SECONDS", 90))
 #: Before the first page has connected, the browser gets more time.
 STARTUP_GRACE_SECONDS = int(os.environ.get("DOC_ANONYMIZER_STARTUP_SECONDS", 10 * 60))
+#: How long a start may take before it counts as failed (older computers
+#: with a hard disk need a while after switching on).
+START_WAIT_SECONDS = 180
 
 log = logging.getLogger("doc_anonymizer.launcher")
 
@@ -365,6 +368,12 @@ def serve(open_page: bool = True) -> None:
     url = f"http://127.0.0.1:{port}/"
     write_state(port, token, __version__)
     log.info("Server gestartet: %s (Version %s, Prozess %s)", url, __version__, os.getpid())
+    try:
+        from .parallel import describe_resources
+
+        log.info("Rechner: %s", describe_resources())
+    except Exception:  # noqa: BLE001 - information only
+        pass
 
     def watchdog() -> None:
         started = time.monotonic()
@@ -404,7 +413,7 @@ def serve(open_page: bool = True) -> None:
         os._exit(0)
 
     def first_window() -> None:
-        if _wait_for(lambda: running_url() == url, 60):
+        if _wait_for(lambda: running_url() == url, START_WAIT_SECONDS):
             open_window(url, app.extensions["anonymizer"]["new_ticket"]())
         else:
             log.error("Der eigene Server antwortet nicht – kein Fenster geöffnet.")
@@ -490,12 +499,12 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         lock = _InstanceLock()
         if not lock.acquire():
-            # Another start is just in progress (double click): wait for it.
+            # Another start is just in progress (an impatient second double
+            # click – the first start can take a while on an older computer).
+            # That start opens the window itself; a second one would only
+            # confuse. Just make sure it really comes up.
             log.info("Start läuft bereits – warte auf den Server.")
-            if _wait_for(lambda: running() is not None, 90):
-                found = running()
-                if open_page and found:
-                    _open_further_window(found)
+            if _wait_for(lambda: running() is not None, START_WAIT_SECONDS):
                 return 0
             show_message("Das Programm startet bereits. Bitte einen Moment warten und dann "
                          "noch einmal auf das Symbol klicken.", error=False)

@@ -513,8 +513,14 @@ def _image_check(doc: pymupdf.Document, terms, settings: Settings,
         image, raster, scale = job
         if not raster:
             # Text pages: one "sparse text" pass finds everything visible; small
-            # print of the text layer is covered completely by stage 1.
-            return ocr.ocr_words(image, scale, settings.ocr_language, psm=11)
+            # print of the text layer is covered completely by stage 1. The
+            # page image is a crisp render – there the fast language files
+            # read as well as the accurate ones (measured: each misses 4 of
+            # 451 words) in less than half the time.
+            return ocr.ocr_words(image, scale, settings.ocr_language, psm=11,
+                                 fast=settings.fast_verification_ocr)
+        # Pages rebuilt as images (scans): the accurate files – on noisy
+        # images every bit of reading quality counts.
         boxes = ocr.ocr_words(image, scale, settings.ocr_language)
         if settings.thorough_ocr:
             boxes += ocr.ocr_words(image, scale, settings.ocr_language, psm=11)

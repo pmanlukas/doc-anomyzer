@@ -300,6 +300,7 @@ def analyse_document(path: Path, settings: Settings,
     doc = open_pdf(path)
     pages: list[PageInfo] = []
     ocr_jobs: list[tuple[int, Image.Image, float]] = []
+    ocr_block = min(8, 2 * ocr_threads())  # page images waiting for the text recognition
     has_hidden_layers = bool(doc.get_ocgs())
 
     pending_pixels = 0
@@ -365,9 +366,10 @@ def analyse_document(path: Path, settings: Settings,
         if progress:
             progress(page.number + 1, len(doc), "Seiten lesen")
 
-        # Avoid holding too many large images in memory at once (eight A4
-        # pages – or fewer, if the pages are very large).
-        if len(ocr_jobs) >= 8 or pending_pixels >= MAX_PENDING_OCR_BYTES:
+        # Avoid holding too many large images in memory at once: two pages
+        # per parallel reader (at most eight A4 pages – or fewer, if the
+        # pages are very large or the computer has little memory).
+        if len(ocr_jobs) >= ocr_block or pending_pixels >= MAX_PENDING_OCR_BYTES:
             _run_ocr(doc, pages, ocr_jobs, settings, progress)
             ocr_jobs.clear()
             pending_pixels = 0

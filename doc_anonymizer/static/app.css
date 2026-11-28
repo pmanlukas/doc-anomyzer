@@ -47,7 +47,8 @@ mark { background: #ffe58a; color: inherit; border-radius: 3px; padding: 0 .12em
 .small { font-size: .88rem; }
 .center { text-align: center; }
 .spacer { flex: 1; }
-.hidden { display: none !important; }
+/* "hidden" must win over the display value of .btn and friends. */
+.hidden, [hidden] { display: none !important; }
 .nowrap { white-space: nowrap; }
 .noscript { padding: 2rem; text-align: center; }
 svg.ico { width: 1.15em; height: 1.15em; flex: none; vertical-align: -.2em; fill: none;
@@ -161,18 +162,10 @@ label.check input { margin-top: .28rem; width: 1.05rem; height: 1.05rem; flex: n
 .dropzone .drop-icon svg.ico { width: 30px; height: 30px; }
 .dropzone strong { display: block; font-size: 1.22rem; margin-bottom: .2rem; }
 .dropzone .row { justify-content: center; margin-top: 1.1rem; }
-.howto { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin-top: 1.6rem;
-  text-align: left; }
-@media (max-width: 760px) { .howto { grid-template-columns: 1fr; } }
-.howto .step-card { display: flex; gap: .75rem; align-items: flex-start; }
-.howto .num { width: 30px; height: 30px; border-radius: 50%; background: var(--primary);
-  color: #fff; font-weight: 700; display: flex; align-items: center; justify-content: center;
-  flex: none; font-size: .95rem; }
-.howto strong { display: block; }
-.savebar { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap;
-  justify-content: center; margin-top: 1.4rem; padding-top: 1.1rem;
-  border-top: 1px solid var(--line); color: var(--muted); font-size: .93rem; }
-.savebar code { color: var(--text); }
+/* where the results go: one short line */
+.savebar { display: flex; align-items: center; gap: .45rem; flex-wrap: wrap;
+  justify-content: center; margin-top: 1.2rem; color: var(--muted); font-size: .93rem; }
+.savebar strong { color: var(--text); word-break: break-word; }
 body.dragging::after { content: "PDF-Dateien hier loslassen"; position: fixed; inset: 0;
   z-index: 40; background: rgba(47, 91, 234, .12); border: 4px dashed var(--primary);
   display: flex; align-items: center; justify-content: center; font-size: 1.6rem;
@@ -193,21 +186,6 @@ body.dragging::after { content: "PDF-Dateien hier loslassen"; position: fixed; i
 .chip.bad { background: var(--bad-50); color: var(--bad); }
 .chip.warn { background: var(--warn-50); color: var(--warn); }
 .chip.work { background: var(--primary-50); color: var(--primary-600); }
-
-/* ---------- steps ---------- */
-.steps { display: flex; gap: 0; margin: 0 0 1.3rem; align-items: center; flex-wrap: wrap; }
-.step { display: flex; align-items: center; gap: .5rem; color: var(--muted); font-size: .93rem;
-  font-weight: 600; }
-.step .dot { width: 26px; height: 26px; border-radius: 50%; border: 2px solid var(--line-strong);
-  display: flex; align-items: center; justify-content: center; font-size: .82rem;
-  background: var(--surface); }
-.step.active { color: var(--text); }
-.step.active .dot { border-color: var(--primary); background: var(--primary); color: #fff; }
-.step.done { color: var(--ok); }
-.step.done .dot { border-color: var(--ok); background: var(--ok); color: #fff; }
-.step + .step::before { content: ""; width: 44px; height: 2px; background: var(--line-strong);
-  margin: 0 .8rem; }
-.step.done + .step::before { background: var(--ok); }
 
 /* ---------- progress ---------- */
 .progress-card { text-align: center; padding: 2.4rem 1.5rem; }
@@ -231,16 +209,25 @@ body.dragging::after { content: "PDF-Dateien hier loslassen"; position: fixed; i
   flex-direction: column; max-height: calc(100vh - var(--topbar) - 7.2rem); padding: 0;
   overflow: hidden; }
 @media (max-width: 1050px) { .side { position: static; max-height: none; } }
-.tabs { display: flex; border-bottom: 1px solid var(--line); padding: 0 .5rem; flex: none; }
-.tab { border: 0; background: none; font: inherit; font-weight: 600; color: var(--muted);
-  padding: .85rem .8rem .7rem; cursor: pointer; border-bottom: 3px solid transparent;
-  display: flex; align-items: center; gap: .4rem; }
-.tab:hover { color: var(--text); }
-.tab.active { color: var(--primary-600); border-bottom-color: var(--primary); }
-.tab .badge { background: #e3e8f2; color: #414b5e; border-radius: 99px; padding: 0 .5rem;
-  font-size: .78rem; min-width: 1.4rem; text-align: center; }
-.tab .badge.attn { background: #f5b301; color: #3a2a00; }
-.tab-body { overflow: auto; padding: 1rem 1.1rem 1.1rem; flex: 1; min-height: 12rem; }
+/* left column: the open questions on top, everything else folded away */
+.side-body { overflow: auto; flex: 1; min-height: 9rem; }
+.side-section { padding: 1rem 1.1rem .5rem; }
+.side-head { display: flex; align-items: center; gap: .5rem; margin-bottom: .35rem; }
+.side-head h2 { margin: 0; font-size: 1.08rem; }
+.all-clear { display: flex; gap: .7rem; align-items: center; padding-bottom: .5rem; }
+.all-clear svg.ico { width: 30px; height: 30px; color: var(--ok); }
+.fold { border-top: 1px solid var(--line); }
+.fold > summary { cursor: pointer; padding: .75rem 1.1rem; font-weight: 600; display: flex;
+  align-items: center; gap: .5rem; list-style: none; }
+.fold > summary::-webkit-details-marker { display: none; }
+.fold > summary::before { content: ""; width: .5em; height: .5em; flex: none;
+  border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted);
+  transform: rotate(-45deg); transition: transform .12s; margin: 0 .25rem 0 .1rem; }
+.fold[open] > summary::before { transform: rotate(45deg); }
+.fold > summary:hover { background: var(--surface-2); }
+.fold > summary .count { margin-left: auto; font-weight: 500; }
+.fold-body { padding: 0 1.1rem 1rem; }
+.fold-body input[type=search] { margin-bottom: .2rem; }
 .tab-intro { color: var(--muted); font-size: .9rem; margin-bottom: .8rem; }
 
 .q-card { border: 1px solid var(--line); border-radius: var(--radius-s); padding: .75rem .85rem;
@@ -255,11 +242,11 @@ body.dragging::after { content: "PDF-Dateien hier loslassen"; position: fixed; i
 .empty-state svg.ico { width: 40px; height: 40px; color: var(--ok); display: block;
   margin: 0 auto .5rem; }
 
-.group-head { position: sticky; top: -1rem; background: var(--surface-2);
+.group-head { position: sticky; top: 0; background: var(--surface-2);
   margin: .9rem -1.1rem .2rem; padding: .35rem 1.1rem; font-weight: 650; font-size: .88rem;
   display: flex; justify-content: space-between; z-index: 2; color: #414b5e;
   border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
-.group-head:first-child { margin-top: -.2rem; }
+.group-head:first-child { margin-top: .4rem; }
 .entity { display: grid; grid-template-columns: auto 1fr auto; gap: .15rem .7rem;
   padding: .55rem .2rem; border-bottom: 1px solid #eef1f6; align-items: center; }
 .entity.selected { background: #fff9dc; }
@@ -268,6 +255,8 @@ body.dragging::after { content: "PDF-Dateien hier loslassen"; position: fixed; i
 .entity .repl { grid-column: 2 / 4; display: flex; gap: .4rem; align-items: center;
   color: var(--muted); }
 .entity .repl input { padding: .22rem .5rem; font-size: .9rem; max-width: 15rem; }
+.entity .more { font-weight: 700; letter-spacing: .08em; color: var(--muted); padding: .1rem .4rem; }
+.entity .extra { grid-column: 2 / 4; }
 .count { background: #e9edf5; border-radius: 99px; padding: 0 .5rem; font-size: .78rem;
   color: #414b5e; white-space: nowrap; }
 .count.attn { background: var(--warn-50); color: var(--warn); border: 1px solid var(--warn-line); }
@@ -281,14 +270,20 @@ body.dragging::after { content: "PDF-Dateien hier loslassen"; position: fixed; i
 .viewer { padding: 1rem 1.2rem 1.2rem; min-width: 0; }
 .viewer-bar { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap;
   margin-bottom: .7rem; }
-.viewer-bar select { width: auto; max-width: 22rem; }
+.viewer-bar .group { display: inline-flex; align-items: center; gap: .4rem; min-width: 0; }
+.viewer-bar select { width: auto; max-width: 20rem; min-width: 0; }
 .viewer-bar input[type=number] { width: 4.6rem; }
-.legend { display: flex; gap: .9rem; flex-wrap: wrap; font-size: .82rem; color: var(--muted);
-  margin-bottom: .6rem; }
-.legend span::before { content: ""; display: inline-block; width: 12px; height: 12px;
-  margin-right: .3rem; vertical-align: -1px; border: 2px solid; border-radius: 3px; }
+/* below the page: how to add something, and what the colours mean */
+.viewer-foot { display: flex; gap: .4rem 1rem; align-items: center; flex-wrap: wrap;
+  margin-top: .7rem; font-size: .86rem; color: var(--muted); }
+.legend { display: inline-flex; gap: .8rem; flex-wrap: wrap; font-size: .8rem;
+  color: var(--muted); }
+.legend span { background: none !important; }
+.legend span::before { content: ""; display: inline-block; width: 11px; height: 11px;
+  margin-right: .3rem; vertical-align: -1px; border: 2px solid; border-color: inherit;
+  border-radius: 3px; }
 .page-scroll { overflow: auto; background: #dfe3ec; border-radius: var(--radius-s);
-  padding: 1rem; text-align: center; max-height: calc(100vh - var(--topbar) - 15rem);
+  padding: 1rem; text-align: center; max-height: calc(100vh - var(--topbar) - 13.5rem);
   min-height: 20rem; }
 .page-wrap { position: relative; display: inline-block; box-shadow: 0 2px 12px rgba(0, 0, 0, .2);
   background: #fff; user-select: none; width: 100%; max-width: 100%; text-align: left;
@@ -318,8 +313,6 @@ body.dragging::after { content: "PDF-Dateien hier loslassen"; position: fixed; i
   box-shadow: 0 -4px 16px rgba(16, 24, 40, .08); }
 .actionbar .inner { max-width: 1680px; margin: 0 auto; padding: .8rem 1.3rem; display: flex;
   gap: 1rem; align-items: center; flex-wrap: wrap; }
-.actionbar .where { color: var(--muted); font-size: .92rem; min-width: 0; }
-.actionbar .where code { color: var(--text); }
 
 /* ---------- result ---------- */
 .result-hero { text-align: center; padding: 2.2rem 1.5rem 1.8rem; }
@@ -329,8 +322,17 @@ body.dragging::after { content: "PDF-Dateien hier loslassen"; position: fixed; i
 .result-hero .big-icon svg.ico { width: 38px; height: 38px; stroke-width: 2.4; }
 .result-hero.warn .big-icon { background: var(--warn-50); color: var(--warn); }
 .result-hero.bad .big-icon { background: var(--bad-50); color: var(--bad); }
-.result-hero .where { margin: 1rem auto 1.2rem; max-width: 720px; }
+.result-hero .lead { max-width: 680px; margin: 0 auto 1.3rem; }
+.result-hero .below { margin: 1rem 0 0; word-break: break-word; }
+.result-hero .below strong { color: var(--text); }
 .result-hero .row { justify-content: center; }
+/* rarely needed actions of a result: one row of links, explanations fold out */
+.result-links { display: flex; gap: .3rem 1.3rem; flex-wrap: wrap; align-items: flex-start;
+  margin-top: 1rem; padding-top: .9rem; border-top: 1px solid var(--line); }
+.checks-info > summary { list-style: none; cursor: pointer; }
+.checks-info > summary::-webkit-details-marker { display: none; }
+.checks-info[open] { flex-basis: 100%; }
+.checks-info ol { margin: .7rem 0 .5rem; }
 .doc-row { display: grid; grid-template-columns: auto 1fr auto; gap: .3rem 1rem;
   align-items: center; padding: .85rem .2rem; border-top: 1px solid var(--line); }
 .doc-row:first-child { border-top: 0; }
@@ -376,7 +378,10 @@ body.dragging::after { content: "PDF-Dateien hier loslassen"; position: fixed; i
   border-radius: var(--radius-s); cursor: pointer; margin-bottom: .5rem; align-items: flex-start; }
 .choice.active { border-color: var(--primary); background: var(--primary-50); }
 .choice input { margin-top: .3rem; accent-color: var(--primary); }
+details.advanced { margin-top: .9rem; }
 details.advanced summary { cursor: pointer; font-weight: 600; color: var(--primary-600); }
+details.advanced h3 { margin-top: 1.3rem; }
+details.advanced summary + h3 { margin-top: .9rem; }
 .path-row { display: flex; gap: .6rem; align-items: center; }
 .path-row code { flex: 1; padding: .5rem .7rem; }
 .crumbs { display: flex; flex-wrap: wrap; gap: .15rem; align-items: center; margin: .2rem 0 .7rem;

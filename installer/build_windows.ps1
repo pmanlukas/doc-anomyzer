@@ -13,7 +13,8 @@
     python\            Python 3.12 "embeddable" + all packages + spaCy model
     doc_anonymizer\    the program
     tesseract\         Tesseract OCR (from the UB Mannheim build)
-    models\tessdata\   OCR language files deu/eng/osd (tessdata_best)
+    models\tessdata\   OCR language files deu/eng/osd (tessdata_best) and
+                       deu_fast/eng_fast (tessdata_fast)
     app.ico            program icon
 #>
 param(
@@ -41,6 +42,9 @@ $Checksums = @{
   "deu.traineddata"                            = "8407331d6aa0229dc927685c01a7938fc5a641d1a9524f74838cdac599f0d06e"
   "eng.traineddata"                            = "8280aed0782fe27257a68ea10fe7ef324ca0f8d85bd2fd145d1c2b560bcb66ba"
   "osd.traineddata"                            = "9cf5d576fcc47564f11265841e5ca839001e7e6f38ff7f7aacf46d15a96b00ff"
+  # tessdata_fast 4.1.0, stored under their own names next to the accurate files
+  "deu_fast.traineddata"                       = "19d219bbb6672c869d20a9636c6816a81eb9a71796cb93ebe0cb1530e2cdb22d"
+  "eng_fast.traineddata"                       = "7d4322bd2a7749724879683fc3912cb542f19906c83bcc1a52132556427170b2"
   "de_core_news_lg-3.8.0-py3-none-any.whl"     = "36fda650e476b54d5e87803635e36dadd1e8e034c4b5962088586d684f4c9fed"
 }
 
@@ -146,6 +150,13 @@ foreach ($lang in "deu", "eng", "osd") {
   $file = Join-Path $Downloads "$lang.traineddata"
   # Fixed release (not the moving "main" branch).
   Get-Download "https://raw.githubusercontent.com/tesseract-ocr/tessdata_best/4.1.0/$lang.traineddata" $file
+  Copy-Item $file $tessdata
+}
+# Second, fast set of language files: used for the check of finished text
+# pages (crisp page images), where it reads as well in half the time.
+foreach ($lang in "deu", "eng") {
+  $file = Join-Path $Downloads "${lang}_fast.traineddata"
+  Get-Download "https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/4.1.0/$lang.traineddata" $file
   Copy-Item $file $tessdata
 }
 # Configuration files of Tesseract (output formats) next to the language files;

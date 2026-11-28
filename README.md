@@ -70,6 +70,11 @@ normales Windows-Programm, auch ohne Internet:
 2. „Installieren“ → „Fertigstellen“ (Haken „Programm jetzt starten“).
 3. Künftig: Symbol „Dokumenten-Anonymisierer“ auf dem Desktop/im Startmenü.
 
+**Voraussetzungen:** Windows 10 oder 11 (64 Bit), 4 GB Arbeitsspeicher
+(empfohlen: 8 GB), 4 GB freier Speicherplatz. Das Programm läuft auch auf
+älteren Rechnern (getestete Zielklasse: Intel Core i3 der 4000er-Reihe, zwei
+Kerne) – siehe „Ältere Rechner“ in Abschnitt 8.
+
 Eigenschaften des Setups:
 
 * **komplett offline** – Python 3.12, alle Pakete, das deutsche Sprachmodell
@@ -116,7 +121,7 @@ Programmordner. Download: Actions → Lauf „Windows-Setup“ → Artefakt
 Setup.exe zum Vergleichen: `Get-FileHash Dokumenten-Anonymisierer-Setup.exe`).
 
 **Veröffentlichen:** Ein Release entsteht nur absichtlich – durch ein
-Versions-Tag (`git tag v0.2.0 && git push origin v0.2.0`) oder über Actions →
+Versions-Tag (`git tag v0.3.0 && git push origin v0.3.0`) oder über Actions →
 „Windows-Setup“ → „Run workflow“ mit dem Haken „Als Release veröffentlichen“.
 Der Job `release` hängt die getestete Setup.exe, ihre Prüfsumme, `install.ps1`
 und `ANLEITUNG.txt` an das Release `v<Version>`. Eine veröffentlichte Version
@@ -152,17 +157,19 @@ Sprachmodell bei der Installation aus dem Internet; ZIP erzeugen mit
    Dokumenten dieselben Initialen. Auch hunderte Dokumente sind kein Problem
    (siehe Abschnitt 8). Ein defektes oder passwortgeschütztes PDF hält die
    übrigen nicht auf – es wird am Ende mit dem Grund aufgeführt.
-3. **Prüfen:**
-   * **Offene Fragen:** nur die Stellen, bei denen sich das Programm **nicht
-     sicher** ist – mit Textzusammenhang und einem Vorschlag. Jeweils
-     „Schwärzen“ / „Lesbar lassen“ wählen oder alle Vorschläge übernehmen.
-   * **Alle Funde:** alle gefundenen Daten mit ihrer Ersetzung. Schalter aus
-     = nicht schwärzen. Ersetzungen lassen sich direkt ändern.
-   * **Bereiche:** automatisch erkannte Unterschriften, Stempel, Logos.
+3. **Prüfen** (eine Spalte, kein Reiter-Wechsel):
+   * **Offene Fragen** stehen oben: nur die Stellen, bei denen sich das
+     Programm **nicht sicher** ist – mit Textzusammenhang und einem
+     Vorschlag. Jeweils „Schwärzen“ oder „Lesbar lassen“ wählen.
+   * **„Alle Ersetzungen anzeigen“** klappt die vollständige Liste auf:
+     Schalter aus = nicht schwärzen; Ersetzungen lassen sich direkt ändern;
+     hinter „…“ steht „Nie schwärzen – auch nicht in künftigen Akten“.
+   * **„Erkannte Bereiche anzeigen“** (falls vorhanden): Unterschriften,
+     Stempel, Logos.
    * Fehlt etwas: „Begriff hinzufügen“ oder auf der Seitenansicht **mit der
      Maus einen Rahmen ziehen**.
-4. **Anonymisieren und speichern:** ein Klick (der Speicherort steht daneben
-   und lässt sich dort ändern). Ergebnis je Dokument:
+4. **Anonymisieren und speichern:** ein Klick. Der Speicherort wird auf der
+   Startseite (oder in den Einstellungen) gewählt. Ergebnis je Dokument:
    * `…_anonymisiert.pdf` – das anonymisierte Dokument,
    * `…_anonymisiert.txt` – Textfassung in Lesereihenfolge (ideal zum
      Einfügen in KI-Werkzeuge),
@@ -185,8 +192,11 @@ Sprachmodell bei der Installation aus dem Internet; ZIP erzeugen mit
    neutral `Dokument_003_anonymisiert.pdf`.
 
    Die Ergebnisseite zeigt alle Dokumente (Problemfälle zuerst), „Ordner
-   öffnen“ führt direkt zu den Dateien, „Alle als ZIP“ lädt alle bestandenen
-   Ergebnisse auf einmal herunter.
+   öffnen“ führt direkt zu den Dateien, „Alle als ZIP herunterladen“ lädt
+   alle bestandenen Ergebnisse auf einmal. Selten gebrauchte Einstellungen
+   (Kategorien, Listen, Aufbewahrung) stehen unter Einstellungen →
+   „Erweitert“; dort lässt sich das Programm auch beenden (sonst genügt es,
+   das Fenster zu schließen).
 
    Der Standard-Speicherort ist bewusst nicht „Dokumente“ oder „Desktop“,
    weil diese oft per OneDrive in die Cloud synchronisiert werden. Das
@@ -217,7 +227,14 @@ suchen – er darf nicht gefunden werden.
 
 **Bewusst lesbar bleiben:** Gerichte und Behörden („Landgericht München I“),
 Paragraphen und Gesetze, Aktenzeichen *veröffentlichter* Entscheidungen
-(„BGH, Urteil vom … – VI ZR 123/19“), sonstige Datumsangaben, Beträge.
+(„BGH, Urteil vom … – VI ZR 123/19“), sonstige Datumsangaben, Beträge –
+und **Anlagenbezeichnungen**: „Anlage K 1“, „B 3“, „K 4 bis K 6“,
+„Anlagenkonvolut K 7“, „ASt 2“ / „AG 01“, „BK 1“ / „BB 1“, „Bf 1“, „NK 11“,
+Kanzleikürzel wie „HL 9a“, „rop 10b“ oder „B&B 2“, „Beilage ./A“
+(Österreich), „act. 3/5“ (Schweiz), „Exhibit C-12“ (Schiedsverfahren), auch
+über einen Zeilenumbruch hinweg. Ohne ihre Anlagennummern wäre ein
+Schriftsatz nicht mehr zu gebrauchen (`doc_anonymizer/detect/references.py`;
+Testsätze in `tests/exhibit_sentences.py`).
 Alles ist in den Einstellungen anpassbar (Kategorien, „nie schwärzen“,
 „immer schwärzen“).
 
@@ -228,8 +245,15 @@ Mehrere voneinander unabhängige Verfahren werden kombiniert:
 1. **Regeln für deutsche Rechtstexte** – Anreden, Titel, Rollen („Rechtsanwältin“,
    „Zeuge“, „Richter am Landgericht“), Unterschriftszeilen, Geburtsnamen,
    Schreibweise „Nachname, Vorname“, über 8 000 Vornamen; Muster mit
-   Prüfziffern für IBAN, Steuer-ID, Kreditkarten.
+   Prüfziffern für IBAN, Steuer-ID, Kreditkarten. Nachnamen, die zugleich
+   eine Rolle bezeichnen, werden am Zusammenhang erkannt: „Prof. Dr. Karl
+   Richter“, „Herrn Richter“, „Frau Vater“ sind Namen – „der Richter am
+   Landgericht“, „Sehr geehrter Herr Richter“ und „Ihr Herr Vater“ nicht.
 2. **Lokales Sprachmodell spaCy** `de_core_news_lg` (Open Source, MIT).
+   Was das Modell auf einer Anlagenbezeichnung meldet, wird verworfen: Es
+   hielt „B 1“ für eine Bundesstraße (Ort) und „BK 1“ für eine Firma.
+   Regeln mit eigenem, strengem Format (Kfz-Kennzeichen, IBAN, Aktenzeichen)
+   sind davon nicht berührt.
 3. **Optional GLiNER** `urchade/gliner_multi_pii-v1` (Open Source, Apache 2.0),
    ein speziell auf personenbezogene Daten trainiertes Modell.
 4. **Weitergabe:** Ist ein Name einmal erkannt, wird *jedes* weitere
@@ -288,6 +312,9 @@ Mehrere voneinander unabhängige Verfahren werden kombiniert:
 | 4 – Nachkontrolle | Erkennung läuft erneut über das Ergebnis | Hinweise zur Entscheidung durch den Nutzer |
 
 Erst wenn Stufe 1 bis 3 nichts mehr finden, gilt die Prüfung als bestanden.
+Stufe 2 liest Textseiten (scharfe Seitenbilder) mit einem zweiten, schnellen
+Satz von Sprachdateien, Bildseiten (Scans) mit den genauen – siehe „Ältere
+Rechner“ in Abschnitt 8.
 Eine Prüfstufe, die nicht ausgeführt werden konnte (abgeschaltet, technisches
 Problem), wird als **„nicht ausgeführt“** ausgewiesen – nie als bestanden.
 
@@ -356,19 +383,28 @@ python -m tests.evaluate --anzahl 24 --scan                      # digital + Sca
 python -m tests.evaluate --anzahl 12 --nur-scans --qualitaet schlecht
 ```
 
-Messwerte (Version 0.2.0, ohne GLiNER, 4 CPU-Kerne, genaue OCR-Sprachdateien
-`tessdata_best` wie im Setup; ohne jede Nutzerentscheidung – unsichere
-Vorschläge bleiben dabei unbeantwortet):
+Messwerte (ohne GLiNER, 4 CPU-Kerne, Sprachdateien wie im Setup; ohne jede
+Nutzerentscheidung – unsichere Vorschläge bleiben dabei unbeantwortet. Die
+gemischten Akten und die schlechten Scans sind mit Version 0.3.0 neu
+gemessen, die übrigen Zeilen stammen aus Version 0.2.0):
 
 | Testlauf | Eingefügte Angaben | Entfernt | Prüfung |
 |---|---|---|---|
 | 24 gemischte Akten (⅓ Scans guter Qualität) | 292 | **100 %** | bestanden |
 | 36 gemischte Akten, zweiter Datensatz | 438 | **100 %** | bestanden |
 | 12 Scans mittlerer Qualität | 146 | **100 %** | bestanden |
-| 12 Scans schlechter Qualität (150 dpi, verwaschen, schief) | 146 | **100 %** | bestanden |
+| 36 Scans schlechter Qualität (150 dpi, verwaschen, schief; drei Stichproben derselben 12 Dokumente – die Störungen werden jedes Mal neu gewürfelt) | 438 | 437 = **99,8 %** (eine Ortsangabe in einer Stichprobe; in der Wiederholung dieses Dokuments trat sie nicht mehr auf) | bestanden |
 | 12 Scans sehr schlechter Qualität (Fax-Niveau, 120 dpi) | 146 | 96,6–98,6 % (je nach Stichprobe) | Seiten als „schlecht lesbar“ zur Sichtprüfung markiert |
 | 1 Akte, 300 Seiten digital | 3 128 | **100 %** | bestanden, 3,7 min, alle Seiten bleiben Text |
 | 1 Akte, 100 Seiten Scan schlechter Qualität | 1 042 | 99,8 % (2 von der Texterkennung verstümmelte Kleinschreibungen) | **als „nicht bestanden“ gemeldet** – Sichtprüfung nötig; 9,4 min |
+
+Die drei Stichproben schlechter Scans haben zwei Lücken aufgedeckt, die
+Version 0.3.0 schließt (vorher 3–4 statt 1 Leck auf 438 Angaben): eine
+Steuer-ID, zwischen deren Zifferngruppen der Scan ein Störzeichen hinterließ
+(„75'124 758 579“), und eine E-Mail-Adresse, deren „@“ als Buchstabe gelesen
+wurde („<wallı. . jantscheyahoo. de>“ – der Vorname blieb stehen). Die
+frühere Angabe „100 %“ für 12 schlechte Scans galt nur für die damalige
+Stichprobe.
 
 **Durchsatz** (4 CPU-Kerne, inklusive aller vier Prüfstufen):
 
@@ -381,11 +417,53 @@ Vorschläge bleiben dabei unbeantwortet):
 
 Die Zeiten hängen stark vom Rechner und von der Texterkennung ab; die im
 Setup enthaltenen genauen OCR-Sprachdateien sind etwa halb so schnell wie
-die einfachen. Auf demselben Rechner ist diese Version durch die
-zusätzlichen Prüfungen (Sichtbarkeit, Bilddaten) rund 6 % langsamer als
-die Vorversion (189 s statt 178 s für die 90 Dokumente). Die Dokumente
-werden auf mehrere Prozesse verteilt; mit mehr Kernen steigt der Durchsatz
-entsprechend (Arbeitsspeicher: ca. 2 GB + 0,5 GB je zusätzlichem Kern).
+die einfachen. Die Werte dieser Tabelle stammen aus Version 0.2.0; seit
+Version 0.3.0 ist die Kontrolle digitaler Seiten etwa doppelt so schnell
+(siehe unten). Die Dokumente werden auf mehrere Prozesse verteilt; mit mehr
+Kernen steigt der Durchsatz entsprechend (Arbeitsspeicher: ca. 2 GB + 0,6 GB
+je zusätzlichem Arbeitsprozess).
+
+**Ältere Rechner** (Zielklasse: Intel Core i3 der 4000er-Reihe, zwei Kerne /
+vier Threads, 4–8 GB Arbeitsspeicher, Windows 10). Was das Programm dafür tut:
+
+* **Arbeitsspeicher wird erkannt** (unter Windows ohne Zusatzpaket – vorher
+  blieb er dort unbekannt und es starteten zu viele Prozesse). Die Zahl der
+  Arbeitsprozesse richtet sich nach Prozessor *und* freiem Speicher; mit
+  4 GB arbeitet das Programm in einem einzigen Prozess mit höchstens zwei
+  gleichzeitigen Texterkennungen, statt den Rechner zum Auslagern zu zwingen.
+  Der Selbsttest (`python -m doc_anonymizer check`) und die Protokolldatei
+  zeigen, was erkannt wurde.
+* **Hintergrundarbeit mit niedriger Priorität:** Arbeitsprozesse und
+  Texterkennung laufen unter Windows mit „niedriger als normal“. Das Fenster
+  und andere Programme bleiben bedienbar, während eine Akte verarbeitet wird.
+* **Kontrolle digitaler Seiten in der halben Zeit:** Die Bildprüfung
+  (Stufe 2) war bei digitalen Dokumenten mit rund 80 % der größte Posten. Auf
+  den scharfen Seitenbildern dieser Seiten lesen die schnellen
+  Sprachdateien (`tessdata_fast`) genauso gut wie die genauen (gemessen an
+  451 Wörtern: je 4 verfehlt, je 2 nur vom anderen gelesen) – in weniger als
+  der halben Zeit. Bei **Scans** bleibt es bei den genauen Dateien: Im
+  direkten Vergleich auf denselben 24 schlechten Scans fand die Kontrolle mit
+  den genauen Dateien 4 nachzuschwärzende Stellen, mit den schnellen nur 2.
+* **Start:** Ein ungeduldiger zweiter Doppelklick öffnet kein zweites
+  Fenster mehr; das Programm wartet bis zu drei Minuten auf einen langsamen
+  Start, bevor es einen Fehler meldet.
+
+Gemessen mit zwei Kernen (dieselbe Maschine wie oben, auf zwei Kerne
+beschränkt; ein i3-4000 ist je Kern eher langsamer, die Größenordnung stimmt):
+
+| Dokument | vorher | jetzt |
+|---|---|---|
+| 30 Seiten digital | 33–50 s | **19–20 s** (ca. 0,65 s je Seite) |
+| 10 Seiten Scan schlechter Qualität | ca. 55 s | ca. 55 s (ca. 5,5 s je Seite – unverändert, Genauigkeit geht vor) |
+
+Speicherbedarf (gemessen): Hauptprozess mit Sprachmodell ca. 1 GB, je
+Arbeitsprozess ca. 0,5 GB, je laufender Texterkennung ca. 0,1 GB; Spitze
+beim Lesen eines Scans in einem Prozess 1,65 GB (4-GB-Modus) bzw. 1,8 GB.
+Nicht verkürzen lässt sich die Texterkennung eingescannter Seiten: je Seite
+vier Durchläufe mit den genauen Sprachdateien (zwei beim Lesen, zwei bei der
+Kontrolle). Für eine eingescannte Akte mit 100 Seiten sind auf einem solchen
+Rechner 10–20 Minuten einzuplanen; die Verarbeitung läuft im Hintergrund und
+lässt sich abbrechen.
 
 **Unterschriften** (`tests/signature_docs.py`: erfundene Briefe mit
 synthetischen Unterschriften in blauer/schwarzer Tinte, nach Grußformeln,
@@ -432,6 +510,16 @@ lesbar“ markiert und müssen selbst angesehen werden.
 * **Sehr kurze Namen** (zwei Buchstaben, z. B. „Li“) werden als Teil des
   vollen Namens geschwärzt, von der Prüfung aber nicht einzeln gesucht (zu
   viele Fehltreffer) – bei solchen Namen bitte selbst kurz hinsehen.
+* **Nachnamen, die zugleich ein gewöhnliches Wort für eine Rolle sind**
+  („Richter“, „Vater“): Sie werden dort entfernt, wo der Zusammenhang einen
+  Namen zeigt (Vorname, Titel oder Anrede davor), aber nicht im ganzen
+  Dokument gesucht – sonst verschwände jeder „Richter am Landgericht“.
+  Steht ein solcher Name ganz ohne Anrede („Richter erklärte …“), bitte
+  selbst markieren. Seltene Nachnamen wie „Arzt“ oder „Fahrer“ werden nicht
+  als Name erkannt.
+* **Straßennummern** („auf der B 12“) bleiben lesbar: Sie sehen aus wie
+  Anlagenbezeichnungen, und die haben Vorrang. Wo eine Straße die Person
+  erkennbar machen könnte, bitte mit der Maus einrahmen.
 * **Indirekte Identifizierbarkeit** (z. B. „der einzige Kinderarzt im Ort“,
   seltene Berufe, Diagnosen) kann ein Programm nicht sicher beurteilen.
 * Eine automatische Anonymisierung ersetzt nicht die abschließende

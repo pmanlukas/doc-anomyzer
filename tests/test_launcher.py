@@ -242,3 +242,32 @@ def test_shutdown_not_offered_in_plain_server():
     client = create_app(start_worker=False).test_client()
     assert client.post("/api/shutdown", headers={"X-Anonymizer": "1"}).status_code == 404
     assert client.get("/api/status").get_json()["managed"] is False
+
+
+def test_impatient_second_double_click_opens_no_second_window(home, monkeypatch):
+    # On an older computer the first start takes a while. A second double
+    # click during that time waits for the first start - which opens the
+    # window itself - and must not open another one.
+    from doc_anonymizer import launcher
+
+    answers = iter([None, None, ("http://127.0.0.1:1/", "token")])
+    monkeypatch.setattr(launcher, "running", lambda: next(answers, ("http://127.0.0.1:1/", "token")))
+    monkeypatch.setattr(launcher._InstanceLock, "acquire", lambda self: False)
+    monkeypatch.setattr(launcher.time, "sleep", lambda seconds: None)
+    opened = []
+    monkeypatch.setattr(launcher, "_open_further_window", lambda found: opened.append(found))
+    monkeypatch.setattr(launcher, "serve", lambda open_page=True: pytest.fail("second server"))
+
+    assert launcher.main([]) == 0
+    assert opened == []
+
+
+def test_click_on_the_symbol_of_the_running_program_opens_a_window(home, monkeypatch):
+    from doc_anonymizer import launcher
+
+    found = ("http://127.0.0.1:1/", "token")
+    monkeypatch.setattr(launcher, "running", lambda: found)
+    opened = []
+    monkeypatch.setattr(launcher, "_open_further_window", lambda f: opened.append(f))
+    assert launcher.main([]) == 0
+    assert opened == [found]

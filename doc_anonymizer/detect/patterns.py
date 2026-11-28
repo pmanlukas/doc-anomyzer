@@ -147,6 +147,10 @@ def _r(pattern: str, flags: int = 0) -> re.Pattern:
     return re.compile(pattern, flags | re.VERSION1)
 
 
+#: Between the digit groups of a labelled number: blank, hyphen or the
+#: specks a poor scan leaves there (apostrophes, dots, commas).
+_SPECK = r"[ \-'’‘`´.,]{0,2}"
+
 RULES: list[Rule] = [
     Rule("email", Category.EMAIL,
          _r(r"[\w.%+\-]+@[\w\-]+(?:\.[\w\-]+)*\.\p{L}{2,}")),
@@ -162,6 +166,20 @@ RULES: list[Rule] = [
             r"(?: ?\. ?(?:de|com|net|org|eu|info|biz|at|ch|io|nl|fr|it|es|pl|be|lu|dk|se|"
             r"online|email|law|legal)(?![\p{L}\d]))?"),
          priority=91),
+    # Poor scans: the "@" is read as a letter and blanks appear after dots –
+    # "Von: Walli Jäntsch <wallı. . jantscheyahoo. de>". In angle brackets,
+    # lower case and ending like an address, it is one.
+    Rule("email_bracket", Category.EMAIL,
+         _r(r"(?<=<)[\p{Ll}\d][\p{Ll}\d.\-_%+@ ]{3,70}?\. ?(?:de|com|net|org|eu|info|biz|at|ch|io)"
+            r"(?= ?>)"),
+         priority=91),
+    # ... and outside of brackets where a mail provider is glued to the name
+    # ("jantscheyahoo. de": the "e" was the "@").
+    Rule("email_provider", Category.EMAIL,
+         _r(r"(?<![\p{L}\d@.])[\p{Ll}\d][\p{Ll}\d.\-_]{2,40}"
+            r"(?:yahoo|gmail|googlemail|gmx|hotmail|outlook|t-online|icloud|posteo|freenet|"
+            r"protonmail) ?\. ?(?:de|com|net|org|at|ch)(?![\p{L}\d])"),
+         priority=90),
     Rule("url", Category.URL,
          _r(r"(?:https?://|www\.)[^\s<>\"“”]+[^\s<>\"“”.,;:)\]]")),
     Rule("domain", Category.URL,
@@ -200,9 +218,13 @@ RULES: list[Rule] = [
     Rule("tax_id_ctx", Category.TAX_ID,
          # [IıIl1|]: OCR reads the "I" of "ID" in many ways ("Steuer-ıD", "Steuer-lD").
          _r(r"(?:Steuer[- ]?[IıIl1|][Dd]|Steuer-?Identifikationsnummer|Identifikationsnummer|"
-            r"IdNr\.?)[^\d\n]{0,40}?(\d{2}[ \-]?\d{3}[ \-]?\d{3}[ \-]?\d{3})(?!\d)", re.IGNORECASE), group=1, priority=94),
+            # After the label, specks of a poor scan may sit between the groups
+            # ("75'124 758 579").
+            rf"IdNr\.?)[^\d\n]{{0,40}}?(\d{{2}}{_SPECK}\d{{3}}{_SPECK}\d{{3}}{_SPECK}\d{{3}})(?!\d)",
+            re.IGNORECASE), group=1, priority=94),
     Rule("tax_id", Category.TAX_ID,
-         _r(r"(?<![\d,.])\d{2}[ \-]?\d{3}[ \-]?\d{3}[ \-]?\d{3}(?!\d|[,.]\d)"),
+         _r(r"(?<![\d,.])\d{2}[ \-'’‘`´]{0,2}\d{3}[ \-'’‘`´]{0,2}\d{3}[ \-'’‘`´]{0,2}\d{3}"
+            r"(?!\d|[,.]\d)"),
          validator=tax_id_valid,
          priority=93),
     Rule("tax_number", Category.TAX_ID,

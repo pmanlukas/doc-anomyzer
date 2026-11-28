@@ -42,7 +42,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from . import learning, report
-from .config import Settings, atomic_write_text, home_dir, is_cloud_synced
+from .config import (Settings, atomic_write_text, background_priority, home_dir,
+                     is_cloud_synced)
 from .detect.pipeline import Detector
 from .errors import Cancelled, UserError, friendly_message
 from .extract import analyse_document
@@ -371,6 +372,9 @@ class Worker:
         self.store.save(case)
 
     def _run(self) -> None:
+        # The job thread gives way to the web server of the same process:
+        # the window stays responsive while documents are being processed.
+        background_priority(process=False)
         while True:
             case_id, action = self.jobs.get()
             with self._count:  # never "idle" between waiting and running

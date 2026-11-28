@@ -11,7 +11,7 @@ import regex as re
 from ..lexicon import is_first_name, is_keep_prefix, is_stopword
 from ..models import Category, Detection, PageInfo
 from ..textmap import PageText
-from . import ner, patterns
+from . import ner, patterns, references
 from .persons import TITLES, PersonRules, clean_person_span, split_name
 
 log = logging.getLogger(__name__)
@@ -113,10 +113,19 @@ class Detector:
             rules = PersonRules(spacy_res.proper_noun_starts, spacy_res.person_starts)
             found.extend(rules.detect(text, page))
 
+        # Exhibit designations ("Anlage K 1", "B 3") are numbering. The
+        # statistical models take them for roads, companies or names – what
+        # they report there is cut away (rules above are not affected).
+        protected = references.spans(text)
+
         for start, end, label in spacy_res.entities:
             category = _SPACY_LABELS.get(label)
             if category is None or category not in self.enabled:
                 continue
+            kept = references.outside(text, start, end, protected)
+            if kept is None:
+                continue
+            start, end = kept
             if category is Category.PERSON:
                 cleaned = clean_person_span(text, start, end)
                 if cleaned is None:
@@ -139,12 +148,18 @@ class Detector:
                                            {"weak": level == WEAK}))
 
         if Category.OTHER_NAME in self.enabled:
-            found.extend(self._proper_noun_suggestions(text, page, spacy_res, found))
+            found.extend(self._proper_noun_suggestions(text, page, spacy_res, found, protected))
 
         if self.use_gliner:
             try:
                 for det in ner.gliner_detect(text, page, self.settings.gliner_threshold,
                                              self.enabled):
+                    if det.category in (Category.PERSON, Category.ORG, Category.LOCATION):
+                        kept = references.outside(text, det.start, det.end, protected)
+                        if kept is None:
+                            continue
+                        det.start, det.end = kept
+                        det.text = text[det.start:det.end]
                     if det.category is Category.PERSON:
                         cleaned = clean_person_span(text, det.start, det.end)
                         if cleaned is None:
@@ -169,7 +184,8 @@ class Detector:
 
     @staticmethod
     def _proper_noun_suggestions(text: str, page: int, spacy_res: ner.SpacyResult,
-                                 found: list[Detection]) -> list[Detection]:
+                                 found: list[Detection],
+                                 protected: list[tuple[int, int]] = ()) -> list[Detection]:
         """Proper nouns that no detector claimed – proposed as *uncertain*.
 
         spaCy's tagger marks words like "Ivanova" or "Wolkenstein" as proper
@@ -181,6 +197,10 @@ class Detector:
         for start, end in spacy_res.proper_noun_spans:
             if any(s < end and start < e for s, e in covered):
                 continue
+            kept = references.outside(text, start, end, list(protected))
+            if kept is None:
+                continue
+            start, end = kept
             value = text[start:end].strip(".,;:()„“\"'")
             end = start + len(value)
             if len(value) < 3 or not _plausible_entity(text, start, end,

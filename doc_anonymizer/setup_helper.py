@@ -31,6 +31,13 @@ TESSDATA_SHA256 = {
     "eng": "8280aed0782fe27257a68ea10fe7ef324ca0f8d85bd2fd145d1c2b560bcb66ba",
     "osd": "9cf5d576fcc47564f11265841e5ca839001e7e6f38ff7f7aacf46d15a96b00ff",
 }
+#: The second, fast set (tessdata_fast): stored as "deu_fast.traineddata" next
+#: to the accurate files and used for the check of finished text pages.
+TESSDATA_FAST_URLS = tuple(url.replace("tessdata_best", "tessdata_fast") for url in TESSDATA_URLS)
+TESSDATA_FAST_SHA256 = {
+    "deu": "19d219bbb6672c869d20a9636c6816a81eb9a71796cb93ebe0cb1530e2cdb22d",
+    "eng": "7d4322bd2a7749724879683fc3912cb542f19906c83bcc1a52132556427170b2",
+}
 
 
 class ChecksumError(OSError):
@@ -62,23 +69,41 @@ def _download(url: str, target: Path, expected: str | None = None) -> None:
     tmp.replace(target)
 
 
+def _fetch(urls: tuple[str, ...], lang: str, target: Path, expected: str | None) -> None:
+    """Download one language file (second address as a fallback)."""
+    if target.exists() and (expected is None or sha256(target) == expected):
+        print(f"  {target.name} bereits vorhanden")
+        return
+    for n, url in enumerate(urls, 1):
+        try:
+            _download(url.format(lang=lang), target, expected)
+            return
+        except OSError as exc:  # HTTPError/URLError are OSErrors
+            print(f"\n  {target.name}: Download fehlgeschlagen ({exc})")
+            if n == len(urls):
+                raise
+
+
 def tessdata(languages: tuple[str, ...] = ("deu", "eng", "osd")) -> None:
-    """German/English language files for Tesseract (best accuracy models)."""
+    """German/English language files for Tesseract.
+
+    The accurate set (tessdata_best) is required. The fast set is an extra:
+    without it the program simply uses the accurate files everywhere.
+    """
+    from .ocr import FAST_SUFFIX
+
     target_dir = MODELS_DIR / "tessdata"
     for lang in languages:
-        target = target_dir / f"{lang}.traineddata"
-        expected = TESSDATA_SHA256.get(lang)
-        if target.exists() and (expected is None or sha256(target) == expected):
-            print(f"  {target.name} bereits vorhanden")
+        _fetch(TESSDATA_URLS, lang, target_dir / f"{lang}.traineddata", TESSDATA_SHA256.get(lang))
+    for lang, expected in TESSDATA_FAST_SHA256.items():
+        if lang not in languages:
             continue
-        for n, url in enumerate(TESSDATA_URLS, 1):
-            try:
-                _download(url.format(lang=lang), target, expected)
-                break
-            except OSError as exc:  # HTTPError/URLError are OSErrors
-                print(f"\n  {target.name}: Download fehlgeschlagen ({exc})")
-                if n == len(TESSDATA_URLS):
-                    raise
+        try:
+            _fetch(TESSDATA_FAST_URLS, lang, target_dir / f"{lang}{FAST_SUFFIX}.traineddata",
+                   expected)
+        except OSError:
+            print(f"  {lang}{FAST_SUFFIX}.traineddata fehlt - die Kontrolle nutzt die genauen "
+                  "Sprachdateien (etwas langsamer).")
 
 
 def gliner() -> None:

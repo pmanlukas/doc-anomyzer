@@ -35,35 +35,85 @@ from .errors import Cancelled, WorkerCrashed
 
 log = logging.getLogger(__name__)
 
-#: Approximate memory need of one worker process (PyMuPDF, images, word list).
-WORKER_MEMORY_MB = 450
+#: Memory one worker process needs at its peak (PyMuPDF, page images, word
+#: list: about 500 MB measured) including the Tesseract process it starts.
+WORKER_MEMORY_MB = 600
+#: Kept free for the main process: the language model alone needs 1 GB.
+MAIN_MEMORY_MB = 1500
+#: Computers with less installed memory than this (in practice: 4 GB) do
+#: everything in one process and read at most two pages at a time.
+LOW_MEMORY_TOTAL_MB = 5000
+
+
+def _windows_memory_mb() -> tuple[int, int] | None:
+    """(available, installed) physical memory on Windows, without extra packages."""
+    import ctypes
+
+    class MemoryStatus(ctypes.Structure):
+        _fields_ = [("dwLength", ctypes.c_ulong), ("dwMemoryLoad", ctypes.c_ulong),
+                    ("ullTotalPhys", ctypes.c_ulonglong), ("ullAvailPhys", ctypes.c_ulonglong),
+                    ("ullTotalPageFile", ctypes.c_ulonglong),
+                    ("ullAvailPageFile", ctypes.c_ulonglong),
+                    ("ullTotalVirtual", ctypes.c_ulonglong),
+                    ("ullAvailVirtual", ctypes.c_ulonglong),
+                    ("ullAvailExtendedVirtual", ctypes.c_ulonglong)]
+
+    status = MemoryStatus()
+    status.dwLength = ctypes.sizeof(MemoryStatus)
+    try:
+        if not ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+            return None
+    except (AttributeError, OSError):
+        return None
+    return int(status.ullAvailPhys / 2**20), int(status.ullTotalPhys / 2**20)
+
+
+def _memory_mb() -> tuple[int | None, int | None]:
+    """(available, installed) physical memory in MB; ``None`` where unknown."""
+    if sys.platform.startswith("win"):
+        return _windows_memory_mb() or (None, None)
+    values: dict[str, int] = {}
+    try:
+        with open("/proc/meminfo", encoding="ascii") as fh:
+            for line in fh:
+                name, _, rest = line.partition(":")
+                if name in ("MemAvailable", "MemTotal"):
+                    values[name] = int(rest.split()[0]) // 1024
+    except (OSError, ValueError, IndexError):
+        pass
+    return values.get("MemAvailable"), values.get("MemTotal")
 
 
 def _available_memory_mb() -> int | None:
     """Free physical memory (None if unknown)."""
-    try:
-        import psutil  # optional
+    return _memory_mb()[0]
 
-        return int(psutil.virtual_memory().available / 2**20)
-    except ImportError:
-        pass
-    try:
-        with open("/proc/meminfo", encoding="ascii") as fh:
-            for line in fh:
-                if line.startswith("MemAvailable:"):
-                    return int(line.split()[1]) // 1024
-    except OSError:
-        pass
-    return None
+
+def _total_memory_mb() -> int | None:
+    """Installed physical memory (None if unknown)."""
+    return _memory_mb()[1]
+
+
+def low_memory() -> bool:
+    """A computer with little memory (4 GB): work one page after the other."""
+    total = _total_memory_mb()
+    return total is not None and total < LOW_MEMORY_TOTAL_MB
 
 
 def worker_count(documents: int) -> int:
-    """How many worker processes to use for ``documents`` documents."""
+    """How many worker processes to use for ``documents`` documents.
+
+    Limited by the processor (one logical core stays free for the window) and
+    by the memory: a process that does not fit makes the computer swap, which
+    is far slower than doing the documents one after the other.
+    """
+    if low_memory():
+        return 1
     cores = os.cpu_count() or 2
-    workers = max(1, cores - 1)  # one core stays free for the user interface
+    workers = max(1, cores - 1)
     memory = _available_memory_mb()
     if memory is not None:
-        workers = min(workers, max(1, (memory - 1500) // WORKER_MEMORY_MB))
+        workers = min(workers, max(1, (memory - MAIN_MEMORY_MB) // WORKER_MEMORY_MB))
     workers = min(workers, 8, documents)
     return max(1, workers)
 
@@ -73,7 +123,17 @@ def ocr_threads() -> int:
     env = os.environ.get("DOC_ANONYMIZER_OCR_THREADS")
     if env and env.isdigit():
         return max(1, int(env))
-    return max(1, min(4, (os.cpu_count() or 2) - 1))
+    threads = max(1, min(4, (os.cpu_count() or 2) - 1))
+    return min(threads, 2) if low_memory() else threads
+
+
+def describe_resources() -> str:
+    """One line for the log: what the program found and how it will work."""
+    available, total = _memory_mb()
+    return (f"{os.cpu_count() or '?'} logische Prozessorkerne, Arbeitsspeicher "
+            f"{total if total is not None else '?'} MB (frei: "
+            f"{available if available is not None else '?'} MB) -> bis zu "
+            f"{worker_count(8)} Arbeitsprozess(e), {ocr_threads()} Texterkennung(en) gleichzeitig")
 
 
 def _init_worker(ocr_threads_per_worker: int, home: str) -> None:
@@ -81,9 +141,12 @@ def _init_worker(ocr_threads_per_worker: int, home: str) -> None:
     os.environ["DOC_ANONYMIZER_OCR_THREADS"] = str(ocr_threads_per_worker)
     os.environ["DOC_ANONYMIZER_HOME"] = home
     os.environ.setdefault("OMP_THREAD_LIMIT", "1")
-    from .config import private_temp_dir, quiet_subprocesses
+    from .config import background_priority, private_temp_dir, quiet_subprocesses
 
     quiet_subprocesses()
+    # The workers (and the Tesseract processes they start) give way to the
+    # window and to whatever else the user is doing.
+    background_priority()
     private_temp_dir()  # page images for Tesseract: not in the shared temp folder
     # Started from pythonw.exe (installed program): there is no console, so
     # stdout/stderr are None – libraries writing to them must not crash.

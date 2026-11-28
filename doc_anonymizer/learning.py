@@ -122,9 +122,15 @@ def learned(min_keep_votes: int = 2) -> Learned:
         last[key] = d
         if d.decision == "behalten":
             keep_votes[key] += 1
+    from .detect.references import is_reference
+
     for key, d in last.items():
         if d.decision == "schwaerzen":
-            result.redact[key] = d.category
+            # Exhibit designations ("B 1", "Anlage K 3") were offered as
+            # places or companies by earlier versions. A confirmation given
+            # then must not make them disappear from every future file.
+            if not is_reference(d.text):
+                result.redact[key] = d.category
         elif keep_votes[key] >= min_keep_votes:
             result.keep.add(key)
     return result

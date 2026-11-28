@@ -4,6 +4,9 @@
  *   #/                 Startseite: Dokumente ablegen, letzte Akten
  *   #/akte/<id>        je nach Status: Fortschritt, Prüfen oder Ergebnis
  *
+ * Leitlinie: ein Weg (ablegen → kurz prüfen → speichern), wenig Text. Was
+ * man selten braucht, liegt eine Ebene tiefer (aufklappbar) – nichts fehlt.
+ *
  * Sicherheit: Texte werden ausschließlich als Textknoten eingefügt (nie als
  * HTML), Stile nur über das CSSOM gesetzt – die Seite kommt mit einer
  * strengen Content-Security-Policy ohne Inline-Skripte und -Stile aus.
@@ -161,7 +164,7 @@ function pathLabel(path) {
   el.set = (value) => {
     const text = String(value || "–");
     el.title = text;
-    el.textContent = text.length > 64 ? `${text.slice(0, 20)} … ${text.slice(-40)}` : text;
+    el.textContent = text.length > 56 ? `${text.slice(0, 16)} … ${text.slice(-36)}` : text;
   };
   el.set(path);
   return el;
@@ -262,13 +265,6 @@ async function route() {
 }
 window.addEventListener("hashchange", route);
 
-function steps(active) {
-  const names = ["Dokumente", "Prüfen", "Ergebnis"];
-  return h("div", { class: "steps" }, names.map((n, i) =>
-    h("div", { class: "step " + (i === active ? "active" : i < active ? "done" : "") },
-      h("span", { class: "dot" }, i < active ? icon("check") : String(i + 1)), n)));
-}
-
 // --------------------------------------------------------------------- home
 
 /** Collect files from a drop (files and whole folders, recursively). */
@@ -305,7 +301,7 @@ async function startCase(fileList) {
   setTitle("Dokumente werden übernommen");
   const bar = h("div", { class: "progress" }, h("div"));
   const label = h("p", { class: "muted" }, "");
-  render(steps(0), h("div", { class: "panel progress-card" },
+  render(h("div", { class: "panel progress-card" },
     h("div", { class: "spinner" }),
     h("h1", {}, "Dokumente werden übernommen …"), bar, label,
     skipped ? h("p", { class: "muted small" }, `${plural(skipped, "Datei ist", "Dateien sind")} kein PDF und ${skipped === 1 ? "wird" : "werden"} übersprungen.`) : null));
@@ -352,7 +348,6 @@ function dropZone() {
   return h("div", { class: "dropzone", id: "dropzone" },
     h("div", { class: "drop-icon" }, icon("upload")),
     h("strong", {}, "PDF-Dateien hierher ziehen"),
-    h("span", { class: "muted" }, "einzelne Dateien oder einen ganzen Ordner – auch hunderte Dokumente auf einmal"),
     h("div", { class: "row" },
       h("button", { class: "btn primary big", onclick: () => files.click() }, icon("file"), "Dateien auswählen"),
       h("button", { class: "btn big", onclick: () => folder.click() }, icon("folder"), "Ordner auswählen")),
@@ -396,8 +391,7 @@ function caseChip(c) {
 
 async function viewHome() {
   setTitle("");
-  const [cases, status, stats] = await Promise.all([
-    api("GET", "/api/cases"), api("GET", "/api/status"), api("GET", "/api/learning")]);
+  const [cases, status] = await Promise.all([api("GET", "/api/cases"), api("GET", "/api/status")]);
   const problems = [];
   if (!status.spacy) problems.push("Das deutsche Sprachmodell fehlt.");
   if (!status.tesseract) problems.push("Die Texterkennung fehlt – eingescannte PDFs können nicht gelesen werden.");
@@ -424,33 +418,28 @@ async function viewHome() {
         },
       }, icon("trash")))));
 
-  const where = pathLabel(status.output_dir);
-  const learned = stats.entscheidungen + stats.selbstkorrekturen;
+  // Where the results go: the folder's name is enough, the full path is the tooltip.
+  const where = h("strong", { id: "where" });
+  const showWhere = (path) => { where.textContent = baseName(path) || path || "–"; where.title = path || ""; };
+  showWhere(status.output_dir);
 
   render(
     problems.length ? notice("bad", h("strong", {}, "Die Installation ist unvollständig. "), problems.join(" "),
       " Bitte das Setup des Programms noch einmal ausführen.") : null,
     h("div", { class: "panel hero" },
       h("h1", {}, "PDF-Dokumente anonymisieren"),
-      h("p", { class: "lead" }, "Namen werden zu Initialen, Adressen, Kontaktdaten und Nummern zu Platzhaltern. " +
-        "Jedes Ergebnis wird automatisch geprüft und als neues PDF gespeichert – nichts verlässt diesen Computer."),
+      h("p", { class: "lead" }, "Namen werden zu Initialen, andere persönliche Daten zu Platzhaltern."),
       dropZone(),
-      h("div", { class: "howto" },
-        h("div", { class: "step-card" }, h("span", { class: "num" }, "1"),
-          h("div", {}, h("strong", {}, "Ablegen"), h("span", { class: "muted small" }, "PDFs hineinziehen. Das Programm liest sie sofort, auch Scans."))),
-        h("div", { class: "step-card" }, h("span", { class: "num" }, "2"),
-          h("div", {}, h("strong", {}, "Kurz prüfen"), h("span", { class: "muted small" }, "Sie sehen, was ersetzt wird, und beantworten nur die offenen Fragen."))),
-        h("div", { class: "step-card" }, h("span", { class: "num" }, "3"),
-          h("div", {}, h("strong", {}, "Fertig gespeichert"), h("span", { class: "muted small" }, "Die anonymisierten PDFs liegen im Ergebnisordner – vierfach geprüft.")))),
-      h("div", { class: "savebar" }, icon("folder"), "Ergebnisse werden gespeichert in", where,
+      h("div", { class: "savebar" }, icon("folder"), "Speicherort:", where,
         h("button", {
-          class: "btn small", onclick: async () => {
+          class: "btn link small", id: "btn-where", onclick: async () => {
             const chosen = await pickFolder(status.output_dir);
-            if (chosen) { status.output_dir = chosen; where.set(chosen); }
+            if (chosen) { status.output_dir = chosen; showWhere(chosen); }
           },
-        }, "Ändern"),
+        }, "ändern"),
         status.cloud ? h("span", { class: "chip warn", title: "Dieser Ordner wird vermutlich mit einem Cloud-Dienst synchronisiert." }, icon("alert"), "Cloud-Ordner") : null)),
-    h("div", { class: "panel" },
+    // The list of cases only appears once there is one.
+    !cases.length ? null : h("div", { class: "panel" },
       h("div", { class: "row between" },
         h("h2", { style: "margin:0" }, "Letzte Akten"),
         cases.length > 1 ? h("button", {
@@ -464,15 +453,8 @@ async function viewHome() {
             try { await api("DELETE", "/api/cases"); toast("Alle Akten gelöscht"); route(); } catch (err) { showError(err); }
           },
         }, icon("trash"), "Alle löschen") : null),
-      cases.length ? h("div", { class: "case-list", style: "margin-top:.6rem" }, rows)
-        : h("p", { class: "muted", style: "margin:.8rem 0 0" }, "Noch keine Akten. Legen Sie oben Ihre ersten PDF-Dateien ab."),
-      h("p", { class: "muted small", style: "margin:1rem 0 0" },
-        status.keep_days > 0
-          ? `Hinweis zum Datenschutz: Zu jeder Akte speichert das Programm eine Arbeitskopie der Originale. Sie wird ${status.keep_days} Tage nach der letzten Bearbeitung automatisch gelöscht. Ihre Ergebnisse bleiben erhalten.`
-          : "Hinweis zum Datenschutz: Zu jeder Akte speichert das Programm eine Arbeitskopie der Originale, bis Sie die Akte löschen.")),
-    h("p", { class: "muted small center" },
-      learned ? `Das Programm lernt mit: ${plural(stats.entscheidungen, "Entscheidung", "Entscheidungen")} von Ihnen ausgewertet, ${plural(stats.immer_schwaerzen, "Begriff wird", "Begriffe werden")} künftig automatisch geschwärzt. · ` : "",
-      `Version ${status.version}`),
+      h("div", { class: "case-list", style: "margin-top:.6rem" }, rows)),
+    h("p", { class: "muted small center" }, `Version ${status.version}`),
   );
   enablePageDrop();
 }
@@ -534,16 +516,11 @@ function viewProgress(c) {
     },
   }, icon("x"), "Abbrechen");
   render(
-    steps(isAnalyse ? 0 : 2),
     h("div", { class: "panel progress-card" },
       h("div", { class: "spinner" }),
-      h("h1", {}, isAnalyse ? "Ihre Dokumente werden gelesen …" : "Ihre Dokumente werden anonymisiert …"),
-      h("p", { class: "muted" }, isAnalyse
-        ? "Der Text wird gelesen (bei Scans per Texterkennung) und nach persönlichen Daten durchsucht."
-        : "Die Daten werden unwiderruflich entfernt, neue PDFs erzeugt und jedes Ergebnis in vier Stufen geprüft."),
+      h("h1", {}, isAnalyse ? "Ihre Dokumente werden gelesen …" : "Ihre Dokumente werden anonymisiert und geprüft …"),
       bar, stepLabel,
-      h("p", { class: "muted small" }, "Das kann bei großen oder eingescannten Dokumenten einige Minuten dauern. " +
-        "Die Verarbeitung läuft weiter, auch wenn Sie dieses Fenster schließen."),
+      h("p", { class: "muted small" }, "Bei großen oder eingescannten Dokumenten kann das einige Minuten dauern."),
       h("div", { class: "row center-row" }, cancelBtn)),
   );
   async function poll() {
@@ -610,38 +587,45 @@ function highlighted(text, term) {
 async function viewReview(c) {
   setTitle("Prüfen");
   app().classList.add("wide");
-  let [entities, settings, attention, status] = await Promise.all([
+  let [entities, settings, attention] = await Promise.all([
     api("GET", `/api/cases/${c.id}/entities`), api("GET", "/api/settings"),
-    api("GET", `/api/cases/${c.id}/attention`), api("GET", "/api/status")]);
+    api("GET", `/api/cases/${c.id}/attention`)]);
   const docs = c.documents.map((d, index) => ({ d, index })).filter((x) => !x.d.error);
   const unreadable = c.documents.filter((d) => d.error);
-  const state = { doc: docs.length ? docs[0].index : 0, page: 0, selected: null, area: null, filter: "", tab: "", zoom: 1, scroll: false };
+  const state = { doc: docs.length ? docs[0].index : 0, page: 0, selected: null, area: null, filter: "", zoom: 1, scroll: false };
   const docLabel = (index) => (c.documents.length > 1 ? `${c.documents[index].name}, ` : "");
 
   const openQuestions = () => entities.filter((e) => e.uncertain && !e.decided);
   const openPages = () => attention.pages.filter((p) => !p.reviewed);
-  state.tab = openQuestions().length + openPages().length ? "fragen" : "funde";
 
-  // ---- left side: tabs ----
-  const tabBar = h("div", { class: "tabs", role: "tablist" });
-  const tabBody = h("div", { class: "tab-body" });
-  function drawTabs() {
-    const open = openQuestions().length + openPages().length;
-    const tabs = [
-      ["fragen", "Offene Fragen", open, open > 0],
-      ["funde", "Alle Funde", entities.length, false],
-    ];
-    if ((attention.areas || []).length) tabs.push(["bereiche", "Bereiche", attention.areas.length, false]);
-    fill(tabBar, ...tabs.map(([key, label, count, attn]) => h("button", {
-      class: `tab ${state.tab === key ? "active" : ""}`, role: "tab", "data-tab": key,
-      onclick: () => { state.tab = key; drawSide(); },
-    }, label, h("span", { class: `badge ${attn ? "attn" : ""}` }, String(count)))));
+  // ---- left side: the open questions; everything else is folded away ----
+  const questionsBox = h("div", { class: "side-section", id: "questions" });
+  const filter = h("input", { type: "search", placeholder: "Suchen …", "aria-label": "Ersetzungen durchsuchen" });
+  filter.addEventListener("input", () => { state.filter = filter.value.toLowerCase(); drawListRows(); });
+  const listRows = h("div");
+  const listLabel = h("span", {});
+  const listCount = h("span", { class: "count" });
+  const listIntro = h("div", { class: "tab-intro" }, "Schalter an = wird ersetzt. Den Ersatztext können Sie ändern.");
+  const listBox = h("details", { class: "fold", id: "all-list" },
+    h("summary", {}, listLabel, listCount), h("div", { class: "fold-body" }, listIntro, filter, listRows));
+  const areasLabel = h("span", {});
+  const areasCount = h("span", { class: "count" });
+  const areasBody = h("div", { class: "fold-body" });
+  const areasBox = h("details", { class: "fold", id: "areas" }, h("summary", {}, areasLabel, areasCount), areasBody);
+  const sideBody = h("div", { class: "side-body" }, questionsBox, listBox, areasBox);
+  listBox.addEventListener("toggle", drawFoldLabels);
+  areasBox.addEventListener("toggle", drawFoldLabels);
+  function drawFoldLabels() {
+    listLabel.textContent = listBox.open ? "Alle Ersetzungen" : "Alle Ersetzungen anzeigen";
+    listCount.textContent = plural(entities.length, "Begriff", "Begriffe");
+    areasLabel.textContent = areasBox.open ? "Erkannte Bereiche" : "Erkannte Bereiche anzeigen";
+    areasCount.textContent = String((attention.areas || []).length);
   }
   function drawSide() {
-    drawTabs();
-    if (state.tab === "fragen") drawQuestions();
-    else if (state.tab === "bereiche") drawAreas();
-    else drawList();
+    drawQuestions();
+    drawList();
+    drawAreas();
+    drawFoldLabels();
     drawSummary();
   }
   function showAt(doc, page, id, area) {
@@ -661,9 +645,9 @@ async function viewReview(c) {
     const open = openQuestions();
     const pages = openPages();
     if (!open.length && !pages.length) {
-      fill(tabBody, h("div", { class: "empty-state" }, icon("checkCircle"),
-        h("strong", {}, "Keine offenen Fragen"),
-        h("p", { class: "small" }, "Blättern Sie rechts kurz durch die Seiten. Wenn alles passt, klicken Sie unten auf „Anonymisieren und speichern“.")));
+      fill(questionsBox, h("div", { class: "all-clear" }, icon("checkCircle"),
+        h("div", {}, h("strong", {}, "Keine offenen Fragen"),
+          h("div", { class: "small muted" }, "Rechts kurz durch die Seiten blättern, dann speichern."))));
       return;
     }
     const cards = open.slice(0, 150).map((e) => h("div", { class: `q-card ${state.selected === e.id ? "selected" : ""}` },
@@ -678,7 +662,7 @@ async function viewReview(c) {
         h("button", { class: "btn link small", onclick: () => showAt(e.first.doc, e.first.page, e.id) }, "Im Dokument zeigen"))));
     const pageCards = pages.map((p) => h("div", { class: "q-card" },
       h("div", { class: "q-term" }, `${docLabel(p.doc)}Seite ${p.page + 1} ist schlecht lesbar`),
-      h("div", { class: "q-meta" }, `Lesbarkeit ${p.quality} % – hier kann die Texterkennung Namen übersehen. Bitte die Seite ansehen und Fehlendes mit der Maus einrahmen.`),
+      h("div", { class: "q-meta" }, `Lesbarkeit ${p.quality} % – hier können Namen übersehen werden. Bitte ansehen und Fehlendes mit der Maus einrahmen.`),
       h("div", { class: "q-actions", style: "margin-top:.5rem" },
         h("button", { class: "btn small", onclick: () => showAt(p.doc, p.page) }, icon("eye"), "Seite ansehen"),
         h("button", {
@@ -689,9 +673,10 @@ async function viewReview(c) {
             } catch (err) { showError(err); }
           },
         }, icon("check"), "Angesehen"))));
-    fill(tabBody, 
-      h("div", { class: "tab-intro" }, "Hier ist sich das Programm nicht sicher. Der farbig markierte Knopf ist der Vorschlag. " +
-        "Ihre Antworten merkt sich das Programm für künftige Akten."),
+    fill(questionsBox,
+      h("div", { class: "side-head" }, h("h2", {}, "Offene Fragen"),
+        h("span", { class: "count attn" }, String(open.length + pages.length))),
+      h("div", { class: "tab-intro" }, "Hier ist sich das Programm nicht sicher. Der blaue Knopf ist der Vorschlag."),
       open.length + pages.length > 1 ? h("button", {
         class: "btn small", style: "margin-bottom:.8rem",
         onclick: async () => {
@@ -713,15 +698,10 @@ async function viewReview(c) {
       cards, open.length > 150 ? h("p", { class: "small muted" }, `… und ${open.length - 150} weitere`) : null, pageCards);
   }
 
-  // ---- "Alle Funde" ----
-  const filter = h("input", { type: "search", placeholder: "In den Funden suchen …", "aria-label": "Funde durchsuchen" });
-  filter.addEventListener("input", () => { state.filter = filter.value.toLowerCase(); drawListRows(); });
-  const listRows = h("div");
+  // ---- everything that is replaced (folded away until asked for) ----
   function drawList() {
     filter.value = state.filter;
-    fill(tabBody, 
-      h("div", { class: "tab-intro" }, "Schalter an = wird ersetzt. Den Ersatztext können Sie direkt ändern."),
-      filter, listRows);
+    filter.classList.toggle("hidden", entities.length < 9);  // a short list needs no search
     drawListRows();
   }
   function drawListRows() {
@@ -743,7 +723,7 @@ async function viewReview(c) {
     cb.addEventListener("change", async () => {
       try {
         await api("PATCH", `/api/cases/${c.id}/entities/${e.id}`, { enabled: cb.checked, decided: true });
-        e.enabled = cb.checked; e.decided = true; drawTabs(); drawListRows(); drawSummary(); drawPage();
+        e.enabled = cb.checked; e.decided = true; drawQuestions(); drawListRows(); drawSummary(); drawPage();
       } catch (err) { cb.checked = e.enabled; showError(err); }
     });
     const repl = h("input", { type: "text", value: e.replacement, title: "Ersatztext – kann geändert werden", "aria-label": `Ersatztext für ${e.original}` });
@@ -754,6 +734,26 @@ async function viewReview(c) {
         e.replacement = repl.value.trim(); toast("Ersatztext gespeichert"); drawPage();
       } catch (err) { showError(err); }
     });
+    // Rarely needed, therefore one click deeper ("…"): never replace this term again.
+    const extra = h("div", { class: "extra hidden" },
+      h("button", {
+        class: "btn link small",
+        onclick: async () => {
+          if (!await confirmDialog({
+            title: "Nie schwärzen?",
+            text: `„${e.original}“ bleibt lesbar und wird auch in künftigen Akten nicht mehr vorgeschlagen.`,
+            ok: "Nie schwärzen",
+          })) return;
+          try {
+            await api("POST", `/api/cases/${c.id}/entities/${e.id}/never`);
+            e.enabled = false; e.decided = true; drawSide(); drawPage();
+          } catch (err) { showError(err); }
+        },
+      }, "Nie schwärzen – auch nicht in künftigen Akten"));
+    const more = h("button", {
+      class: "btn link small more", title: "Mehr", "aria-label": `Mehr zu ${e.original}`, "aria-expanded": "false",
+      onclick: () => more.setAttribute("aria-expanded", String(!extra.classList.toggle("hidden"))),
+    }, "…");
     return h("div", { class: `entity ${e.enabled ? "" : "off"} ${state.selected === e.id ? "selected" : ""}`, "data-id": e.id },
       h("label", { class: "switch", title: "An = wird ersetzt" }, cb, h("span")),
       h("span", { class: "orig", title: e.variants.join(" | ") }, e.original,
@@ -761,20 +761,8 @@ async function viewReview(c) {
       h("span", { class: "count", title: "Anzahl der Fundstellen" }, `${e.count}×`),
       h("div", { class: "repl" }, icon("arrowRight"), repl,
         h("button", { class: "btn link small", title: "Erste Fundstelle im Dokument zeigen", onclick: () => showAt(e.first.doc, e.first.page, e.id) }, "zeigen"),
-        h("button", {
-          class: "btn link small", title: "Diesen Begriff nie schwärzen – auch nicht in künftigen Akten",
-          onclick: async () => {
-            if (!await confirmDialog({
-              title: "Nie schwärzen?",
-              text: `„${e.original}“ bleibt lesbar und wird auch in künftigen Akten nicht mehr vorgeschlagen.`,
-              ok: "Nie schwärzen",
-            })) return;
-            try {
-              await api("POST", `/api/cases/${c.id}/entities/${e.id}/never`);
-              e.enabled = false; e.decided = true; drawSide(); drawPage();
-            } catch (err) { showError(err); }
-          },
-        }, "nie")));
+        more),
+      extra);
   }
 
   // ---- "Bereiche": signatures, handwriting, stamps, images ----
@@ -782,15 +770,15 @@ async function viewReview(c) {
     try {
       await api("DELETE", `/api/cases/${c.id}/manual/${index}`);
       attention = await api("GET", `/api/cases/${c.id}/attention`);  // indices shift
-      if (state.tab === "bereiche" && !(attention.areas || []).length) state.tab = "funde";
       state.area = null;
       drawSide(); drawPage();
     } catch (err) { showError(err); }
   }
   function drawAreas() {
     const areas = attention.areas || [];
-    fill(tabBody, 
-      h("div", { class: "tab-intro" }, "Unterschriften, Handschrift, Stempel und kleine Bilder (z. B. Logos) wurden automatisch erkannt und werden vollständig geschwärzt. " +
+    areasBox.classList.toggle("hidden", !areas.length);
+    fill(areasBody,
+      h("div", { class: "tab-intro" }, "Unterschriften, Handschrift, Stempel und kleine Bilder werden vollständig geschwärzt. " +
         "Enthält ein Bereich nichts Persönliches, können Sie ihn sichtbar lassen."),
       areas.slice(0, 200).map((a) => h("div", { class: `q-card ${state.area === a.index ? "selected" : ""}` },
         h("div", { class: "row between" },
@@ -854,8 +842,8 @@ async function viewReview(c) {
     pageInput.max = pageData.pages;
     pageCount.textContent = `von ${pageData.pages}`;
     kindInfo.textContent = pageData.kind === "scan"
-      ? `Scan – per Texterkennung gelesen${pageData.quality !== null ? ` (Lesbarkeit ${pageData.quality} %)` : ""}`
-      : pageData.kind === "mixed" ? "Text mit Bildern – Bilder per Texterkennung gelesen" : "";
+      ? `Scan${pageData.quality !== null ? ` · Lesbarkeit ${pageData.quality} %` : ""}` : "";
+    kindInfo.title = pageData.kind === "scan" ? "Eingescannte Seite – per Texterkennung gelesen" : "";
     const src = `/api/cases/${c.id}/docs/${state.doc}/pages/${state.page}.png?zoom=${state.zoom > 1.2 ? 2.4 : 1.7}`;
     if (img.getAttribute("src") !== src) img.src = src;
     const W = pageData.width, H = pageData.height;
@@ -868,11 +856,14 @@ async function viewReview(c) {
         style: pct(b.rect), title: enabled ? `wird ersetzt durch: ${b.label}` : "bleibt lesbar (wird nicht geschwärzt)",
         onmousedown: (ev) => ev.stopPropagation(),
         onclick: () => {
+          // A click on a marked spot shows its entry on the left: the open
+          // question, otherwise the row in the (then unfolded) list.
           state.selected = b.entity; state.area = null;
-          if (state.tab !== "funde" && !(ent && ent.uncertain && !ent.decided)) state.tab = "funde";
+          const question = ent && ent.uncertain && !ent.decided;
+          if (!question) listBox.open = true;
           state.filter = "";
           drawSide(); drawPage();
-          const row = tabBody.querySelector(`[data-id="${b.entity}"]`) || tabBody.querySelector(".q-card.selected");
+          const row = (question && questionsBox.querySelector(".q-card.selected")) || listRows.querySelector(`[data-id="${b.entity}"]`);
           if (row) row.scrollIntoView({ block: "center", behavior: "smooth" });
         },
       });
@@ -951,7 +942,7 @@ async function viewReview(c) {
     if (ev.key === "ArrowLeft" || ev.key === "PageUp") { ev.preventDefault(); go(-1); }
   };
 
-  // ---- bottom bar: summary, where it is saved, the one big button ----
+  // ---- bottom bar: what happens, and the one big button ----
   const summary = h("span", {});
   function drawSummary() {
     const on = entities.filter((e) => e.enabled);
@@ -960,7 +951,6 @@ async function viewReview(c) {
     fill(summary, h("strong", {}, `${plural(places, "Stelle wird", "Stellen werden")} ersetzt`),
       open ? h("span", { class: "chip warn", style: "margin-left:.6rem" }, plural(open, "offene Frage", "offene Fragen")) : null);
   }
-  const where = pathLabel(status.output_dir);
   const redactBtn = h("button", {
     class: "btn primary big", id: "btn-redact",
     onclick: async () => {
@@ -970,27 +960,19 @@ async function viewReview(c) {
         text: ["Sie können trotzdem fortfahren: Offene Vorschläge werden so übernommen wie angezeigt – im Zweifel wird geschwärzt.",
           "Schlecht lesbare Seiten sollten Sie vorher selbst ansehen."],
         ok: "Trotzdem anonymisieren", cancel: "Zurück zu den Fragen",
-      })) { state.tab = "fragen"; drawSide(); return; }
+      })) { sideBody.scrollTo(0, 0); return; }
       redactBtn.disabled = true;
       try { await api("POST", `/api/cases/${c.id}/redact`); route(); }
       catch (err) { showError(err); redactBtn.disabled = false; }
     },
   }, "Anonymisieren und speichern", icon("arrowRight"));
   setActionbar(h("div", { class: "actionbar" }, h("div", { class: "inner" },
-    summary, h("span", { class: "spacer" }),
-    h("span", { class: "where" }, "Speichern in ", where, " ",
-      h("button", {
-        class: "btn link small", onclick: async () => {
-          const chosen = await pickFolder(status.output_dir);
-          if (chosen) { status.output_dir = chosen; where.set(chosen); }
-        },
-      }, "ändern")),
-    redactBtn)));
+    summary, h("span", { class: "spacer" }), redactBtn)));
 
   const hints = [...(c.warnings || []), ...c.documents.flatMap((d) => d.notes || []).filter((n) => !n.includes("schlecht lesbar"))];
   render(
     h("div", { class: "review-head" },
-      h("div", {}, steps(1), h("h1", {}, c.title)),
+      h("h1", {}, c.title),
       h("span", { class: "spacer" }),
       h("span", { class: "muted" }, `${plural(docs.length, "Dokument", "Dokumente")} · ${plural(docs.reduce((s, x) => s + x.d.pages, 0), "Seite", "Seiten")}`)),
     unreadable.length ? notice("warn", h("strong", {}, `${plural(unreadable.length, "Dokument konnte", "Dokumente konnten")} nicht gelesen werden und ${unreadable.length === 1 ? "wird" : "werden"} übersprungen: `),
@@ -999,27 +981,31 @@ async function viewReview(c) {
     hints.length ? h("details", { class: "hintbox" }, h("summary", {}, plural(hints.length, "Hinweis", "Hinweise") + " zur Verarbeitung"),
       h("ul", { style: "margin:.4rem 0 0;padding-left:1.2rem" }, hints.slice(0, 30).map((n) => h("li", {}, n)))) : null,
     h("div", { class: "review" },
-      h("div", { class: "panel side" }, tabBar, tabBody, addTerm),
+      h("div", { class: "panel side" }, sideBody, addTerm),
       h("div", { class: "panel viewer" },
+        // One line: document (only if there are several), page, zoom.
         h("div", { class: "viewer-bar" },
-          docs.length > 1 ? [
-            h("button", { class: "btn icon-only", title: "Vorheriges Dokument", onclick: () => goDoc(-1) }, icon("arrowLeft")),
+          docs.length > 1 ? h("span", { class: "group" },
+            h("button", { class: "btn icon-only", title: "Vorheriges Dokument", "aria-label": "Vorheriges Dokument", onclick: () => goDoc(-1) }, icon("chevronLeft")),
             docSelect,
-            h("button", { class: "btn icon-only", title: "Nächstes Dokument", onclick: () => goDoc(1) }, icon("arrowRight"))] : null,
-          h("button", { class: "btn icon-only", onclick: () => go(-1), title: "Vorherige Seite (Pfeiltaste links)" }, icon("chevronLeft")),
-          h("span", {}, "Seite"), pageInput, pageCount,
-          h("button", { class: "btn icon-only", onclick: () => go(1), title: "Nächste Seite (Pfeiltaste rechts)" }, icon("chevronRight")),
+            h("button", { class: "btn icon-only", title: "Nächstes Dokument", "aria-label": "Nächstes Dokument", onclick: () => goDoc(1) }, icon("chevronRight"))) : null,
+          h("span", { class: "group" },
+            h("button", { class: "btn icon-only", onclick: () => go(-1), title: "Vorherige Seite (Pfeiltaste links)", "aria-label": "Vorherige Seite" }, icon("chevronLeft")),
+            h("span", { class: "nowrap" }, "Seite"), pageInput, pageCount,
+            h("button", { class: "btn icon-only", onclick: () => go(1), title: "Nächste Seite (Pfeiltaste rechts)", "aria-label": "Nächste Seite" }, icon("chevronRight"))),
           kindInfo,
           h("span", { class: "spacer" }),
-          h("button", { class: "btn icon-only", title: "Kleiner", onclick: () => { state.zoom = Math.max(0.6, state.zoom - 0.25); applyZoom(); drawPage(); } }, icon("minus")),
-          h("button", { class: "btn icon-only", title: "Größer", onclick: () => { state.zoom = Math.min(2.5, state.zoom + 0.25); applyZoom(); drawPage(); } }, icon("plus"))),
-        h("div", { class: "legend" },
-          h("span", { class: "c-PERSON" }, "Person"), h("span", { class: "c-ORG" }, "Firma"),
-          h("span", { class: "c-ADDRESS" }, "Adresse / Ort"), h("span", { class: "c-BIRTH_DATE" }, "Geburtsdatum"),
-          h("span", { class: "c-other" }, "Nummern, Kontakt")),
+          h("span", { class: "group" },
+            h("button", { class: "btn icon-only", title: "Kleiner", "aria-label": "Kleiner", onclick: () => { state.zoom = Math.max(0.6, state.zoom - 0.25); applyZoom(); drawPage(); } }, icon("minus")),
+            h("button", { class: "btn icon-only", title: "Größer", "aria-label": "Größer", onclick: () => { state.zoom = Math.min(2.5, state.zoom + 0.25); applyZoom(); drawPage(); } }, icon("plus")))),
         scroller,
-        h("p", { class: "muted small", style: "margin:.7rem 0 0" }, icon("edit"),
-          " Fehlt etwas, z. B. eine Unterschrift oder ein Stempel? Mit gedrückter Maustaste einen Rahmen um die Stelle ziehen – sie wird geschwärzt. Gestrichelte Rahmen bleiben lesbar."))),
+        h("div", { class: "viewer-foot" },
+          h("span", {}, icon("edit"), " Fehlt etwas? Mit der Maus einen Rahmen um die Stelle ziehen."),
+          h("span", { class: "spacer" }),
+          h("span", { class: "legend", "aria-label": "Farben der Markierungen" },
+            h("span", { class: "c-PERSON" }, "Person"), h("span", { class: "c-ORG" }, "Firma"),
+            h("span", { class: "c-ADDRESS" }, "Adresse"), h("span", { class: "c-BIRTH_DATE" }, "Geburtsdatum"),
+            h("span", { class: "c-other" }, "Sonstiges"))))),
   );
   applyZoom();
   drawSide();
@@ -1047,10 +1033,6 @@ function viewResult(c) {
   const order = { failed: 0, error: 1, ok: 2 };
   docs.sort((a, b) => order[a.state] - order[b.state] || ((b.v.suspects || []).length - (a.v.suspects || []).length) || a.i - b.i);
 
-  const openFile = async (i, kind) => {
-    try { await api("POST", `/api/cases/${c.id}/docs/${i}/open/${kind}`); }
-    catch (err) { showError(err); }
-  };
   const rows = docs.map(({ d, i, v, state }) => h("div", { class: "doc-row" },
     state === "ok" ? (skippedChecks(v).length
       ? h("span", { class: "chip warn", title: "Mindestens eine Prüfstufe wurde nicht ausgeführt" }, icon("alert"), "Teilweise geprüft")
@@ -1063,18 +1045,20 @@ function viewResult(c) {
         : state === "failed" ? "Bitte nicht weitergeben. Die Datei liegt getrennt im Ordner „VERTRAULICH_nicht_weitergeben“."
           : `${plural(d.pages, "Seite", "Seiten")}${(v.suspects || []).length ? ` · ${plural(v.suspects.length, "Hinweis", "Hinweise")} der Nachkontrolle` : ""}`)),
     state === "error" ? h("span", {}) : h("div", { class: "actions" },
-      state === "ok" ? h("button", { class: "btn small", onclick: () => openFile(i, "pdf"), title: "Anonymisiertes PDF öffnen" }, icon("external"), "Öffnen") : null,
-      h("button", { class: `btn small ${state === "failed" || (v.suspects || []).length ? "primary" : ""}`, onclick: () => openDocDetails(c, d, i) }, icon("eye"), "Ansehen und Prüfdetails"))));
+      h("button", {
+        class: `btn small ${state === "failed" || (v.suspects || []).length ? "primary" : ""}`,
+        title: "Vorschau, Vergleich mit dem Original und Prüfdetails", onclick: () => openDocDetails(c, d, i),
+      }, icon("eye"), "Ansehen"))));
 
   let heroClass = "", heroIcon = "check", headline, sub;
   if (failed.length) {
     heroClass = "bad"; heroIcon = "alert";
     headline = `${plural(failed.length, "Dokument hat", "Dokumente haben")} die Prüfung nicht bestanden`;
-    sub = "Diese Dokumente bitte nicht weitergeben. Unter „Ansehen und Prüfdetails“ steht, was gefunden wurde – mit „Nachbessern“ können Sie Schwärzungen ergänzen.";
+    sub = "Diese Dokumente bitte nicht weitergeben. Unter „Ansehen“ steht, was gefunden wurde – mit „Nachbessern“ ergänzen Sie Schwärzungen.";
   } else if (errors.length) {
     heroClass = "warn"; heroIcon = "alert";
     headline = `${plural(ok.length, "Dokument", "Dokumente")} fertig, ${errors.length} nicht verarbeitet`;
-    sub = "Die verarbeiteten Dokumente haben alle Prüfstufen bestanden. Die Gründe für die übrigen stehen unten.";
+    sub = "Die verarbeiteten Dokumente haben alle Prüfungen bestanden. Die Gründe für die übrigen stehen unten.";
   } else if (unchecked.length) {
     heroClass = "warn"; heroIcon = "alert";
     headline = ok.length === 1 ? "Fertig – aber nicht vollständig geprüft" : `Fertig – ${unchecked.length} von ${ok.length} Dokumenten nicht vollständig geprüft`;
@@ -1082,50 +1066,54 @@ function viewResult(c) {
       "Die übrigen Prüfungen sind bestanden. Sie können die Prüfstufen in den Einstellungen (Erweitert) wieder einschalten.";
   } else {
     headline = ok.length === 1 ? "Fertig – Ihr Dokument ist anonymisiert" : `Fertig – ${ok.length} Dokumente sind anonymisiert`;
-    sub = "Alle Prüfstufen bestanden: Die entfernten Daten sind im Ergebnis weder sichtbar noch wiederherstellbar.";
+    sub = "Alle Prüfungen bestanden. Der Ordner enthält nur geprüfte Ergebnisse und kann als Ganzes weitergegeben werden.";
   }
   const hasFolder = !!(c.summary ? c.summary.has_folder : c.output_dir);
+  // The folder's name is enough here; the full path is the tooltip.
+  const folder = hasFolder ? h("strong", { title: c.output_dir }, baseName(c.output_dir) || c.output_dir) : null;
 
   render(
-    steps(3),
     h("div", { class: `panel result-hero ${heroClass}` },
       h("div", { class: "big-icon" }, icon(heroIcon)),
       h("h1", {}, headline),
-      h("p", { class: "muted", style: "max-width:680px;margin:0 auto" }, sub),
-      hasFolder ? h("div", { class: "where" }, h("span", { class: "muted" }, "Gespeichert in "), pathLabel(c.output_dir)) : null,
-      hasFolder ? h("p", { class: "muted small", style: "margin:.4rem 0 1.1rem" }, "Dieser Ordner enthält nur geprüfte Ergebnisse – Sie können ihn als Ganzes weitergeben.") : null,
+      h("p", { class: "muted lead" }, sub),
       h("div", { class: "row" },
         hasFolder ? h("button", {
-          class: "btn primary big", id: "btn-open-folder", onclick: async () => {
+          class: "btn primary big", id: "btn-open-folder", title: c.output_dir, onclick: async () => {
             try { await api("POST", `/api/cases/${c.id}/open-folder`); } catch (err) { showError(err); }
           },
         }, icon("folder"), "Ordner öffnen") : null,
-        ok.length ? h("a", { class: "btn big", href: `/api/cases/${c.id}/zip`, title: "Alle geprüften Ergebnisse in einer ZIP-Datei – ohne die vertrauliche Zuordnungstabelle" }, icon("archive"), "Alle als ZIP") : null,
-        h("a", { class: "btn big", href: "#/" }, icon("plus"), "Weitere Dokumente"))),
-    hints.length && !failed.length ? notice("info", `${plural(hints.length, "Dokument enthält", "Dokumente enthalten")} Hinweise der Nachkontrolle – meist Fehlalarme wie Fachbegriffe. Ein kurzer Blick lohnt sich.`) : null,
+        h("a", { class: "btn big", href: "#/" }, icon("plus"), "Weitere Dokumente")),
+      h("p", { class: "muted small below" },
+        hasFolder ? ["Gespeichert in ", folder] : null,
+        hasFolder && ok.length ? " · " : null,
+        ok.length ? h("a", { id: "link-zip", href: `/api/cases/${c.id}/zip`, title: "Alle geprüften Ergebnisse in einer ZIP-Datei – ohne die vertrauliche Zuordnungstabelle" }, "Alle als ZIP herunterladen") : null)),
+    hints.length && !failed.length ? notice("info", `${plural(hints.length, "Dokument enthält", "Dokumente enthalten")} Hinweise der Nachkontrolle – meist Fehlalarme. Bitte kurz ansehen.`) : null,
     (c.warnings || []).length ? h("details", { class: "hintbox" }, h("summary", {}, plural(c.warnings.length, "Hinweis", "Hinweise") + " zur Verarbeitung"),
       h("ul", { style: "margin:.4rem 0 0;padding-left:1.2rem" }, c.warnings.slice(0, 30).map((w) => h("li", {}, w)))) : null,
     h("div", { class: "panel" },
       h("h2", {}, "Dokumente"),
       rows,
-      h("div", { class: "row", style: "margin-top:1.1rem;padding-top:1rem;border-top:1px solid var(--line)" },
+      // Rarely needed: one row of secondary links, the explanations fold out.
+      h("div", { class: "result-links" },
         h("button", {
-          class: "btn small", title: "Schwärzungen ergänzen oder ändern und neu anonymisieren", onclick: async () => {
+          class: "btn link small", title: "Schwärzungen ergänzen oder ändern – die bisherigen Ergebnisse dieser Akte werden dabei ersetzt", onclick: async () => {
             try { await api("POST", `/api/cases/${c.id}/review`); route(); } catch (err) { showError(err); }
           },
         }, icon("edit"), "Nachbessern"),
-        c.mapping ? h("a", { class: "btn small", href: `/api/cases/${c.id}/mapping`, target: "_blank", rel: "noopener", title: "Zeigt, welcher Name zu welcher Abkürzung wurde. Vertraulich – niemals weitergeben!" }, icon("lock"), "Zuordnungstabelle (vertraulich)") : null),
-      h("p", { class: "muted small", style: "margin:.7rem 0 0" },
-        "Beim Nachbessern werden die bisherigen Ergebnisdateien dieser Akte durch die neuen ersetzt. ",
-        c.mapping ? "Die Zuordnungstabelle liegt getrennt von den Ergebnissen im Ordner „VERTRAULICH_nicht_weitergeben“." : "")),
-    h("details", { class: "panel" },
-      h("summary", { style: "cursor:pointer;font-weight:650" }, "Was genau wurde geprüft?"),
-      h("ol", { class: "plain", style: "margin-top:.8rem" },
-        h("li", {}, h("strong", {}, "Textprüfung: "), "Jeder gefundene Name und jede Nummer wird im gesamten Text der neuen Datei gesucht – auch in unsichtbarem Text und im Dateinamen."),
-        h("li", {}, h("strong", {}, "Bildprüfung: "), "Jede fertige Seite wird wie von einem Menschen „gelesen“ (Texterkennung) und erneut durchsucht."),
-        h("li", {}, h("strong", {}, "Wiederherstellungsversuche: "), "Das Programm versucht selbst, die entfernten Daten mit mehreren unabhängigen Werkzeugen aus der Datei zurückzuholen."),
-        h("li", {}, h("strong", {}, "Nachkontrolle: "), "Die Erkennung läuft noch einmal über das Ergebnis und meldet alles, was noch nach persönlichen Daten aussieht.")),
-      h("p", { class: "muted small" }, "Selbst nachprüfen: Anonymisiertes PDF öffnen, Strg+F drücken und einen der Namen suchen – er darf nicht gefunden werden.")),
+        c.mapping ? h("a", {
+          class: "btn link small", href: `/api/cases/${c.id}/mapping`, target: "_blank", rel: "noopener",
+          title: "Zeigt, welcher Name zu welcher Abkürzung wurde. Liegt getrennt im Ordner „VERTRAULICH_nicht_weitergeben“ – niemals weitergeben!",
+        }, icon("lock"), "Zuordnungstabelle (vertraulich)") : null,
+        h("details", { class: "checks-info" },
+          h("summary", { class: "btn link small" }, icon("shield"), "Was wurde geprüft?"),
+          h("ol", { class: "plain" },
+            h("li", {}, h("strong", {}, "Text: "), "Jeder gefundene Name und jede Nummer wird in der neuen Datei gesucht – auch in unsichtbarem Text und im Dateinamen."),
+            h("li", {}, h("strong", {}, "Bild: "), "Jede fertige Seite wird per Texterkennung noch einmal gelesen und durchsucht."),
+            h("li", {}, h("strong", {}, "Wiederherstellung: "), "Das Programm versucht selbst, die entfernten Daten aus der Datei zurückzuholen."),
+            h("li", {}, h("strong", {}, "Nachkontrolle: "), "Die Erkennung läuft noch einmal über das Ergebnis.")),
+          h("p", { class: "muted small" }, "Selbst nachprüfen: PDF öffnen, Strg+F drücken und einen der Namen suchen – er darf nicht gefunden werden."),
+          c.mapping ? h("p", { class: "muted small" }, "Die Zuordnungstabelle liegt getrennt von den Ergebnissen im Ordner „VERTRAULICH_nicht_weitergeben“.") : null))),
   );
 }
 
@@ -1191,14 +1179,18 @@ function resultCard(c, d, i, close) {
       : notice("bad", h("strong", {}, "Prüfung nicht bestanden – bitte NICHT weitergeben. "),
         "Gehen Sie über „Nachbessern“ zurück und ergänzen Sie die Schwärzungen, z. B. indem Sie die Stelle mit der Maus einrahmen."),
     h("div", { class: "row" },
-      passed ? h("a", { class: "btn primary", href: `${base}/download/pdf` }, icon("download"), "PDF speichern unter …") : null,
+      passed ? h("button", {
+        class: "btn primary", title: "Anonymisiertes PDF im PDF-Programm öffnen", onclick: async () => {
+          try { await api("POST", `${base}/open/pdf`); } catch (err) { showError(err); }
+        },
+      }, icon("external"), "Öffnen") : null,
+      passed ? h("a", { class: "btn", href: `${base}/download/pdf` }, icon("download"), "Speichern unter …") : null,
       passed ? h("a", { class: "btn", href: `${base}/download/txt`, title: "Reiner Text in Lesereihenfolge – z. B. zum Einfügen in ein KI-Werkzeug" }, icon("text"), "Textfassung") : null,
       h("a", { class: "btn", href: `${base}/download/report?inline=1`, target: "_blank", rel: "noopener" }, icon("shield"), "Prüfbericht")),
     leaks.length ? [h("h3", {}, "Noch gefundene Originaldaten"), h("ul", {}, leaks.slice(0, 50))] : null,
     suspects.length ? [
       h("h3", {}, "Nachkontrolle: bitte kurz entscheiden"),
-      h("p", { class: "muted small" }, "Diese Stellen könnten noch persönliche Daten sein. Oft sind es Fehlalarme (z. B. Fachbegriffe). " +
-        "Ihre Entscheidung merkt sich das Programm."),
+      h("p", { class: "muted small" }, "Diese Stellen könnten noch persönliche Daten sein – oft sind es Fehlalarme (z. B. Fachbegriffe)."),
       h("ul", { style: "padding-left:1.2rem" }, suspects), redoBtn] : null,
     h("h3", {}, "Vorschau"),
     h("div", { class: "viewer-bar" },
@@ -1297,8 +1289,8 @@ async function openSettings() {
     return { cb, el: h("label", { class: "check" }, cb, label) };
   });
   const modes = [
-    ["standard", "Standard (empfohlen)", "Text bleibt als Text erhalten: kleine Dateien, gut durchsuchbar. Eingescannte Seiten werden immer als Bild neu aufgebaut."],
-    ["maximum", "Maximale Sicherheit", "Jede Seite wird als Bild neu aufgebaut. Größere Dateien; der Text wird per Texterkennung neu hinterlegt."],
+    ["standard", "Standard (empfohlen)", "Text bleibt Text: kleine, durchsuchbare Dateien."],
+    ["maximum", "Maximale Sicherheit", "Jede Seite wird als Bild neu aufgebaut: größere Dateien."],
   ].map(([value, label, text]) => {
     const radio = h("input", { type: "radio", name: "mode", value, checked: s.security_mode === value });
     const el = h("label", { class: `choice ${s.security_mode === value ? "active" : ""}` }, radio,
@@ -1349,24 +1341,23 @@ async function openSettings() {
           },
         }, icon("folder"), "Ändern"))),
     h("div", { class: "setting-block" },
-      h("h3", {}, "Was soll entfernt werden?"),
-      h("div", { class: "grid2" }, cats.map((x) => x.el))),
-    h("div", { class: "setting-block" },
       h("h3", {}, "Sicherheitsstufe"), modes.map((m) => m.el)),
-    h("div", { class: "setting-block" },
+    // Everything else is rarely changed and therefore folded away.
+    h("details", { class: "advanced setting-block", id: "advanced" }, h("summary", {}, "Erweitert"),
+      h("h3", {}, "Was soll entfernt werden?"),
+      h("div", { class: "grid2" }, cats.map((x) => x.el)),
       h("h3", {}, "Datenschutz auf diesem Computer"),
       h("div", { class: "row" }, h("span", {}, "Arbeitskopien der Originale löschen"), keep),
-      h("p", { class: "muted small", style: "margin-top:.4rem" }, "Das Programm speichert zu jeder Akte eine Arbeitskopie, damit Sie später nachbessern können. Ihre Ergebnisse im Speicherort sind davon nicht betroffen."),
+      h("p", { class: "muted small", style: "margin-top:.4rem" }, "Zu jeder Akte speichert das Programm eine Arbeitskopie, damit Sie nachbessern können. Ihre Ergebnisse sind davon nicht betroffen."),
       h("label", { class: "check" }, learn, h("span", {}, "Aus meinen Entscheidungen lernen ", h("span", { class: "muted small" }, "(nur auf diesem Computer; gemerkt werden der Begriff und wenige Wörter Zusammenhang – auch nach dem Löschen der Akte, bis Sie „Gelerntes löschen“ wählen)"))),
       h("p", { class: "muted small" },
         `Bisher gelernt: ${plural(stats.entscheidungen, "Entscheidung", "Entscheidungen")}, ${plural(stats.immer_schwaerzen, "Begriff wird", "Begriffe werden")} künftig immer geschwärzt. `,
         h("button", {
           class: "btn link small", onclick: async () => {
-            if (!await confirmDialog({ title: "Gelerntes löschen?", text: "Alle gespeicherten Entscheidungen und das daraus Gelernte (auch das angepasste Sprachmodell) werden gelöscht. Die Listen „Nie schwärzen“ und „Immer schwärzen“ bleiben – sie stehen unter „Erweiterte Einstellungen“.", ok: "Löschen", danger: true })) return;
+            if (!await confirmDialog({ title: "Gelerntes löschen?", text: "Alle gespeicherten Entscheidungen und das daraus Gelernte (auch das angepasste Sprachmodell) werden gelöscht. Die Listen „Nie schwärzen“ und „Immer schwärzen“ bleiben – sie stehen unter „Erweitert“.", ok: "Löschen", danger: true })) return;
             try { await api("POST", "/api/learning/clear"); toast("Gelerntes gelöscht"); } catch (err) { showError(err); }
           },
-        }, "Gelerntes löschen"))),
-    h("details", { class: "advanced setting-block" }, h("summary", {}, "Erweiterte Einstellungen"),
+        }, "Gelerntes löschen")),
       h("h3", {}, "Erkennung und Prüfung"),
       h("label", { class: "check" }, images, "Kleine Bilder auf Textseiten entfernen (Logos, Fotos) – empfohlen"),
       h("label", { class: "check" }, signatures, "Unterschriften, Handschrift und Stempel erkennen und schwärzen – empfohlen"),
@@ -1392,25 +1383,38 @@ async function openSettings() {
         h("div", {}, h("h3", {}, "Nie schwärzen"), h("p", { class: "muted small" }, "Ein Begriff pro Zeile, z. B. der Name Ihrer Kanzlei."), allow),
         h("div", {}, h("h3", {}, "Immer schwärzen"), h("p", { class: "muted small" }, "Ein Begriff pro Zeile – wird in jeder Akte gesucht."), deny))),
     h("div", { class: "modal-foot" },
+      // Closing the window ends the program as well; this is the explicit way.
+      status.managed ? h("button", {
+        class: "btn ghost", id: "btn-quit-settings", title: "Ihre Akten und Ergebnisse bleiben gespeichert",
+        onclick: () => { modal.close(); quitProgram(); },
+      }, icon("power"), "Programm beenden") : null,
+      h("span", { class: "spacer" }),
       h("button", { class: "btn", onclick: () => modal.close() }, "Abbrechen"),
       h("button", { class: "btn primary", onclick: save }, "Speichern")),
   ]);
 }
 
-function openHelp() {
+async function openHelp() {
+  let keepDays = null;
+  try { keepDays = (await api("GET", "/api/status")).keep_days; } catch (err) { /* the help works without it */ }
   const modal = openModal([
     modalHead("So funktioniert es", () => modal),
     h("ol", { class: "plain" },
-      h("li", {}, h("strong", {}, "Ablegen: "), "PDF-Dateien oder einen ganzen Ordner auf die Startseite ziehen. Das Lesen beginnt sofort."),
-      h("li", {}, h("strong", {}, "Prüfen: "), "Unter „Offene Fragen“ stehen nur die Stellen, bei denen sich das Programm nicht sicher ist. " +
-        "Antworten Sie mit „Schwärzen“ oder „Lesbar lassen“. Fehlt etwas, rahmen Sie die Stelle auf der Seite mit der Maus ein."),
-      h("li", {}, h("strong", {}, "Anonymisieren und speichern: "), "Ein Klick. Die Daten werden unwiderruflich entfernt und jedes Ergebnis wird in vier Stufen geprüft."),
-      h("li", {}, h("strong", {}, "Ergebnis: "), "Mit „Ordner öffnen“ gelangen Sie zu den fertigen Dateien. Grün bedeutet: geprüft, kann weitergegeben werden.")),
+      h("li", {}, h("strong", {}, "Ablegen: "), "PDF-Dateien oder einen ganzen Ordner ins Fenster ziehen – auch hunderte auf einmal, auch Scans."),
+      h("li", {}, h("strong", {}, "Kurz prüfen: "), "Links stehen nur die Stellen, bei denen sich das Programm nicht sicher ist. " +
+        "Fehlt etwas, rahmen Sie die Stelle auf der Seite mit der Maus ein."),
+      h("li", {}, h("strong", {}, "Anonymisieren und speichern: "), "Die Daten werden unwiderruflich entfernt, jedes Ergebnis wird vierfach geprüft. " +
+        "Mit „Ordner öffnen“ gelangen Sie zu den fertigen Dateien.")),
     h("dl", { class: "faq" },
       h("dt", {}, "Werden meine Dokumente ins Internet übertragen?"),
       h("dd", {}, "Nein. Alles wird ausschließlich auf diesem Computer verarbeitet. Das Programm braucht keine Internetverbindung."),
       h("dt", {}, "Wo finde ich die fertigen Dateien?"),
       h("dd", {}, "Im Speicherort, der auf der Startseite steht (anfangs der Ordner „Anonymisiert“ in Ihrem Benutzerordner). Für jede Akte gibt es einen Unterordner mit Datum. Er enthält nur geprüfte Ergebnisse und kann als Ganzes weitergegeben werden."),
+      h("dt", {}, "Was speichert das Programm selbst?"),
+      h("dd", {}, "Zu jeder Akte eine Arbeitskopie der Originale, damit Sie später nachbessern können. " +
+        (keepDays > 0 ? `Sie wird ${keepDays} Tage nach der letzten Bearbeitung automatisch gelöscht`
+          : keepDays === 0 ? "Sie bleibt, bis Sie die Akte löschen" : "Sie wird nach einer einstellbaren Frist automatisch gelöscht") +
+        " (Einstellungen → Erweitert). Ihre Ergebnisse bleiben erhalten."),
       h("dt", {}, "Was ist die Zuordnungstabelle?"),
       h("dd", {}, "Sie zeigt, welcher Name zu welcher Abkürzung wurde. Sie liegt getrennt von den Ergebnissen im Ordner „VERTRAULICH_nicht_weitergeben“ (im Speicherort). Sie hebt die Anonymisierung auf – bitte niemals weitergeben oder hochladen."),
       h("dt", {}, "Was bedeutet „Nicht bestanden“?"),
@@ -1420,7 +1424,8 @@ function openHelp() {
       h("dt", {}, "Werden meine Originaldateien verändert?"),
       h("dd", {}, "Nein. Das Programm arbeitet mit einer Kopie und erzeugt neue Dateien."),
       h("dt", {}, "Wie beende ich das Programm?"),
-      h("dd", {}, "Einfach das Fenster schließen – das Programm beendet sich kurz danach von selbst. Laufende Verarbeitungen werden vorher abgeschlossen.")),
+      h("dd", {}, "Einfach das Fenster schließen – das Programm beendet sich kurz danach von selbst. Laufende Verarbeitungen werden vorher abgeschlossen. " +
+        "(Ausdrücklich beenden: Einstellungen → „Programm beenden“.)")),
     h("div", { class: "modal-foot" }, h("button", { class: "btn primary", onclick: () => modal.close() }, "Verstanden")),
   ]);
 }
@@ -1501,10 +1506,15 @@ document.getElementById("btn-help").prepend(icon("help"));
 document.getElementById("btn-settings").prepend(icon("settings"));
 document.getElementById("btn-quit").prepend(icon("power"));
 document.getElementById("btn-settings").addEventListener("click", () => openSettings().catch(showError));
-document.getElementById("btn-help").addEventListener("click", openHelp);
+document.getElementById("btn-help").addEventListener("click", () => openHelp().catch(showError));
+/** The program's own window (no tabs, no address bar)? There, closing the window is "quit". */
+const inOwnWindow = () => ["standalone", "minimal-ui", "window-controls-overlay"]
+  .some((mode) => window.matchMedia(`(display-mode: ${mode})`).matches);
 api("GET", "/api/status").then((s) => {
+  // "Beenden" lives in the settings. Only as a tab of the normal browser
+  // (fallback without the program window) it stays in the header as well.
   const quit = document.getElementById("btn-quit");
-  if (s && s.managed) { quit.hidden = false; quit.addEventListener("click", quitProgram); }
+  if (s && s.managed && !inOwnWindow()) { quit.hidden = false; quit.addEventListener("click", quitProgram); }
   // On a shared computer everybody runs an own copy – show whose this is.
   const badge = document.querySelector(".badge-local");
   if (s && s.user && badge) badge.title += ` Dieses Programm läuft für das Benutzerkonto „${s.user}“.`;

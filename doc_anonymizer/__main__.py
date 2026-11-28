@@ -74,6 +74,13 @@ def _check() -> int:
     else:
         ok = False
         print("[FEHLT] Texterkennung Tesseract (für eingescannte PDFs)")
+    from .parallel import describe_resources, low_memory
+
+    # What the program found on this computer and how it will work with it.
+    print(f"[OK]   Rechner: {describe_resources()}")
+    if low_memory():
+        print("[HINWEIS] Wenig Arbeitsspeicher: Dokumente werden nacheinander verarbeitet "
+              "(langsamer, aber ohne Auslagern). Empfohlen sind 8 GB.")
     print(f"[{'OK' if ner.gliner_installed() else 'optional'}] KI-Zusatzmodell GLiNER "
           f"{'installiert' if ner.gliner_installed() else 'nicht installiert'}")
     return 0 if ok else 1

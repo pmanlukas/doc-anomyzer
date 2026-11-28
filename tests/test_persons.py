@@ -60,3 +60,42 @@ def test_name_in_address_block_does_not_run_into_the_street():
     assert {"Grit", "Herrmann", "Pärtzeltring"} <= redacted
     person = next(e for e in registry.entities.values() if e.surname == "Herrmann")
     assert person.given == ["Grit"] and person.replacement == "G. H."
+
+
+# --- surnames that are also the word for a role ("Richter", "Vater") --------
+
+@pytest.mark.parametrize("text, expected", [
+    # "Richter" is among the most frequent German surnames.
+    ("Das Gutachten von Prof. Dr. Karl Richter liegt vor.", "Karl Richter"),
+    ("unterzeichnet von Karl Richter am 3. Mai", "Karl Richter"),
+    ("Der Zeuge hat Herrn Richter gesehen.", "Richter"),
+    ("Herr Dr. Richter hat das Attest unterzeichnet.", "Richter"),
+    ("Frau Richter, die Mieterin, zahlte nicht.", "Richter"),
+    # After a salutation, title or role a first name plus such a word is a name.
+    ("Die Zeugin Anna Vater erschien.", "Anna Vater"),
+    ("Frau Anna Mutter erklärte", "Anna Mutter"),
+    # Nobody is addressed as "Frau Vater": a surname.
+    ("Frau Vater sagte aus.", "Vater"),
+])
+def test_role_word_as_surname(text, expected):
+    assert expected in names(text)
+
+
+@pytest.mark.parametrize("text", [
+    "Sehr geehrter Herr Richter, anbei übersende ich",     # form of address
+    "Der Richter verkündete den Beschluss.",
+    "Vorsitzender Richter am Landgericht",
+    "als Richter am Amtsgericht tätig",
+    "Ihr Herr Vater und Ihre Frau Mutter waren anwesend.",  # polite description
+    "Die Frau Mutter des Kindes erschien.",
+    "Der Vater des Klägers und sein Sohn",
+])
+def test_role_word_stays_a_role(text):
+    assert names(text) == set()
+
+
+def test_role_before_a_name_is_still_the_role():
+    # "Herr Richter Dr. Sommer": the judge is called Sommer.
+    assert names("Herr Richter Dr. Sommer leitete die Sitzung.") == {"Sommer"}
+    assert names("Richter am Landgericht Köln Dr. Weber") == {"Weber"}
+    assert names("Herr Richter Weber fragte nach.") >= {"Weber"}

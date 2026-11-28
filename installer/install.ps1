@@ -96,7 +96,7 @@
         $Sum = "$Setup.sha256"
 
         # -------------------------------------------------------- download
-        Say '1/3  Herunterladen (etwa 580 MB - je nach Leitung einige Minuten) ...'
+        Say '1/3  Herunterladen (etwa 590 MB - je nach Leitung einige Minuten) ...'
         try {
             Get-File "$Source/$SetupName.sha256" $Sum $false
             Get-File "$Source/$SetupName" $Setup $true
@@ -117,7 +117,7 @@
         Say "     in Ordnung (SHA-256 $($actual.ToLower().Substring(0, 16))...)"
 
         # --------------------------------------------------------- install
-        Say '3/3  Einrichten (1-2 Minuten, ohne Administratorrechte) ...'
+        Say '3/3  Einrichten (meist 1-2 Minuten, auf {ae}lteren Computern bis zu 10; ohne Administratorrechte) ...'
         # /SILENT shows only the progress window; a running older version is
         # ended by the setup itself. User data is never touched.
         $mode = '/SILENT'

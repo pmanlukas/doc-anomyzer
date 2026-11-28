@@ -90,6 +90,57 @@ def _use_local_tessdata() -> None:
         os.environ["TESSDATA_PREFIX"] = str(tdir)
 
 
+#: Suffix of the second, independent set of language files ("deu_fast").
+FAST_SUFFIX = "_fast"
+
+
+def reading_language(language: str, fast: bool = False) -> str:
+    """The Tesseract language(s) for a run.
+
+    Two sets of language files are shipped: the accurate one ("deu") reads
+    the documents and every noisy image; the fast one ("deu_fast", a smaller
+    network that needs less than half the time) is used where the image is a
+    crisp render of digital text and both read equally well – the check of
+    finished text pages. That halves the longest step for digital documents,
+    which matters on older computers. Where a fast file is missing the
+    accurate one is used.
+    """
+    if not fast:
+        return language
+    tdir = tessdata_dir()
+    if tdir is None:
+        return language
+    return "+".join(lang + FAST_SUFFIX if (tdir / f"{lang}{FAST_SUFFIX}.traineddata").exists()
+                    else lang for lang in language.split("+"))
+
+
+def _give_way() -> None:
+    """Start Tesseract with a lower priority (Windows, once per process).
+
+    Text recognition keeps every core busy; started with "below normal"
+    priority it never holds up the program window or other programs. (Worker
+    processes run with this priority anyway and pass it on; this is for
+    documents the main process reads itself.)
+    """
+    import subprocess
+
+    import pytesseract.pytesseract as backend
+
+    if not sys.platform.startswith("win") or getattr(backend.subprocess_args, "_gives_way", False):
+        return
+    original = backend.subprocess_args
+
+    def subprocess_args(*args, **kwargs):
+        options = original(*args, **kwargs)
+        options["creationflags"] = (options.get("creationflags", 0)
+                                    | subprocess.BELOW_NORMAL_PRIORITY_CLASS
+                                    | subprocess.CREATE_NO_WINDOW)
+        return options
+
+    subprocess_args._gives_way = True  # type: ignore[attr-defined]
+    backend.subprocess_args = subprocess_args
+
+
 def is_available() -> bool:
     return tesseract_cmd() is not None
 
@@ -110,12 +161,13 @@ def available_languages() -> list[str]:
 
 
 def ocr_words(image: Image.Image, scale: float, language: str = "deu+eng",
-              min_confidence: float = 0.0, psm: int = 3) -> list[Word]:
+              min_confidence: float = 0.0, psm: int = 3, fast: bool = False) -> list[Word]:
     """Run Tesseract on ``image`` and return words in PDF coordinates.
 
     ``scale`` converts image pixels to PDF points (72 / dpi). A low
     ``min_confidence`` is deliberate: for anonymisation it is better to look at
-    a poorly recognised word than to silently ignore it.
+    a poorly recognised word than to silently ignore it. ``fast`` selects the
+    second set of language files (see :func:`reading_language`).
     """
     import pytesseract
 
@@ -125,9 +177,12 @@ def ocr_words(image: Image.Image, scale: float, language: str = "deu+eng",
             "Tesseract (Texterkennung) ist nicht installiert. Eingescannte Seiten "
             "können ohne Texterkennung nicht anonymisiert werden.")
     pytesseract.pytesseract.tesseract_cmd = cmd
+    _give_way()
 
     try:
-        data = pytesseract.image_to_data(image, lang=language, config=_config(psm),
+        config = _config(psm)  # also points Tesseract to the language files
+        data = pytesseract.image_to_data(image, lang=reading_language(language, fast),
+                                         config=config,
                                          output_type=pytesseract.Output.DICT,
                                          timeout=OCR_TIMEOUT)
     except RuntimeError as exc:

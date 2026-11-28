@@ -71,6 +71,8 @@ Write-Host ("Installationsdauer: {0:N0} s" -f $sw.Elapsed.TotalSeconds)
 Check (Test-Path "$App\python\pythonw.exe") "Programm in $App installiert"
 Check (Test-Path "$App\tesseract\tesseract.exe") "Tesseract mitinstalliert"
 Check (Test-Path "$App\models\tessdata\deu.traineddata") "Deutsche OCR-Sprachdatei mitinstalliert"
+Check ((Test-Path "$App\models\tessdata\deu_fast.traineddata") -and (Test-Path "$App\models\tessdata\eng_fast.traineddata")) `
+  "Schnelle Sprachdateien für die Kontrolle mitinstalliert"
 Check (Test-Path "$App\enthaltene_pakete.txt") "Liste der enthaltenen Pakete vorhanden"
 $desktop = Join-Path ([Environment]::GetFolderPath("Desktop")) "Dokumenten-Anonymisierer.lnk"
 $startmenu = Join-Path ([Environment]::GetFolderPath("Programs")) "Dokumenten-Anonymisierer.lnk"

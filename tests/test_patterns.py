@@ -1,5 +1,7 @@
 """Rule based detection of structured data."""
 
+import pytest
+
 from doc_anonymizer.detect.patterns import detect, iban_valid, luhn_valid, tax_id_valid
 from doc_anonymizer.models import Category
 
@@ -97,3 +99,34 @@ def test_section_sign_misread_by_ocr_is_restored():
     words = line("siehe S 12 der Akte")  # a page, not a section
     _restore_section_signs(words)
     assert words[1].text == "S"
+
+
+# --- poor scans: specks in numbers, e-mail addresses without their "@" ------
+
+def test_tax_id_with_scan_specks_between_the_groups():
+    # Read from a poor scan: "ID" became "1D", a speck became an apostrophe.
+    found = [d for d in detect("Steuer-1D: 75'124 758 579", 0, set(Category))
+             if d.category is Category.TAX_ID]
+    assert found and all(d.text == "75'124 758 579" for d in found)
+    # Without a label the check digit still decides - an amount is not a tax id.
+    assert not [d for d in detect("Betrag 12.345.678.901 EUR", 0, set(Category))
+                if d.category is Category.TAX_ID]
+
+
+@pytest.mark.parametrize("text, address", [
+    # The "@" was read as "e", blanks appeared after the dots.
+    ("Von: Walli Jäntsch <wallı. . jantscheyahoo. de>", "wallı. . jantscheyahoo. de"),
+    ("schrieb karl.kaisergmail.com gestern", "karl.kaisergmail.com"),
+    ("An: Max <max.mustermann@web.de>", "max.mustermann@web.de"),
+])
+def test_damaged_email_addresses_are_found(text, address):
+    found = {d.text for d in detect(text, 0, set(Category))
+             if d.category is Category.EMAIL}
+    assert address in found
+
+
+def test_markup_and_provider_names_are_no_addresses():
+    for text in ("Text <b>fett</b> und <i>kursiv</i>", "Konto bei yahoo.de oder gmx.de",
+                 "siehe Seite <3> und Anlage <K 1>"):
+        assert not [d for d in detect(text, 0, set(Category))
+                    if d.category is Category.EMAIL], text

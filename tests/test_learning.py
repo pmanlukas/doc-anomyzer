@@ -37,3 +37,12 @@ def test_training_due():
     assert learning.training_due(min_new=5)
     learning.save_training_state(examples=learning.training_examples())
     assert not learning.training_due(min_new=5)
+
+
+def test_exhibit_designations_are_never_learned_as_always_redact():
+    # Earlier versions offered "B 1" as a place (road). A confirmation given
+    # then must not remove the exhibit number from every future file.
+    learning.record(learning.Decision("B 1", "LOCATION", "schwaerzen", "unsicher"))
+    learning.record(learning.Decision("Anlage K 3", "OTHER_NAME", "schwaerzen", "unsicher"))
+    learning.record(learning.Decision("Kanzlei Musterhaus", "ORG", "schwaerzen", "hinzugefuegt"))
+    assert set(learning.learned().redact) == {"kanzlei musterhaus"}

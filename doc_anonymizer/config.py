@@ -120,6 +120,43 @@ def quiet_subprocesses() -> None:
     subprocess.Popen._quiet = True  # type: ignore[attr-defined]
 
 
+#: Windows: priority class / thread priority "below normal".
+_BELOW_NORMAL_PRIORITY_CLASS = 0x00004000
+_THREAD_PRIORITY_BELOW_NORMAL = -1
+
+
+def background_priority(process: bool = True) -> None:
+    """Let the heavy work give way to the window and other programs.
+
+    Reading and checking documents keeps every processor core busy for
+    minutes. On an older computer with two cores the window (and everything
+    else) would stutter. With a lower priority the work still gets all the
+    time nobody else wants, but never holds the user up.
+
+    ``process=True`` lowers the whole process (worker processes; the helper
+    programs they start inherit it), ``False`` only the calling thread (the
+    job thread of the main process, whose web server must stay responsive).
+    A failure is ignored: the priority is a courtesy, not a requirement.
+    """
+    try:
+        if sys.platform.startswith("win"):
+            import ctypes
+
+            kernel = ctypes.windll.kernel32
+            if process:
+                kernel.GetCurrentProcess.restype = ctypes.c_void_p
+                kernel.SetPriorityClass.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
+                kernel.SetPriorityClass(kernel.GetCurrentProcess(), _BELOW_NORMAL_PRIORITY_CLASS)
+            else:
+                kernel.GetCurrentThread.restype = ctypes.c_void_p
+                kernel.SetThreadPriority.argtypes = [ctypes.c_void_p, ctypes.c_int]
+                kernel.SetThreadPriority(kernel.GetCurrentThread(), _THREAD_PRIORITY_BELOW_NORMAL)
+        elif process:
+            os.nice(5)
+    except (AttributeError, OSError):
+        pass
+
+
 def user_models_dir() -> Path:
     """Models the program creates itself (fine-tuned language model).
 
@@ -191,6 +228,10 @@ class Settings:
     detect_signatures: bool = True
     #: Stage 2: read every finished page with OCR after anonymisation.
     deep_verification: bool = True
+    #: Stage 2 reads text pages (crisp page images) with the second, fast set
+    #: of language files – same result there, less than half the time. Pages
+    #: rebuilt as images are always read with the accurate set.
+    fast_verification_ocr: bool = True
     #: Stage 3: recovery attempts with independent tools (forensics).
     forensic_check: bool = True
     #: Learn from the user's decisions (stored locally in feedback.jsonl).
