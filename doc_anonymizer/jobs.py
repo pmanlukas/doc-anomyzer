@@ -44,6 +44,7 @@ from pathlib import Path
 from . import learning, report
 from .config import (Settings, atomic_write_text, background_priority, home_dir,
                      is_cloud_synced)
+from .detect import ner
 from .detect.pipeline import Detector
 from .errors import Cancelled, UserError, friendly_message
 from .extract import analyse_document
@@ -460,6 +461,9 @@ class Worker:
         self.store.save(case)
         total = len(case.documents)
         progress = self._progress_fn(case)
+        # The language model loads in the background while the documents
+        # are being read (text recognition runs in other processes).
+        ner.preload()
         detector = Detector(settings)
         docs: list[list[PageInfo] | None] = [None] * total
         detections: list = [None] * total

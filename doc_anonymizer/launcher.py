@@ -346,6 +346,23 @@ def _wait_for(predicate, seconds: float) -> bool:
 
 # ----------------------------------------------------------------- server
 
+def _warm_up() -> None:
+    """The window is open: load the language model before it is needed.
+
+    Only with enough memory (8 GB and more – the usual office computer): the
+    model occupies 1 GB from then on. Smaller computers load it when the
+    first documents are read.
+    """
+    try:
+        from .detect import ner
+        from .parallel import low_memory
+
+        if not low_memory():
+            ner.preload()
+    except Exception:  # noqa: BLE001 - a convenience, never a reason to fail
+        log.info("Vorladen des Sprachmodells nicht möglich", exc_info=True)
+
+
 def serve(open_page: bool = True) -> None:
     """Start the server (this process) and stop it when nobody uses it."""
     from waitress import create_server
@@ -377,8 +394,12 @@ def serve(open_page: bool = True) -> None:
 
     def watchdog() -> None:
         started = time.monotonic()
+        warmed = False
         while not stop_event.wait(5):
             life = app.extensions["anonymizer"]["life"]
+            if life["connected"] and not warmed:
+                warmed = True
+                _warm_up()
             if worker and worker.busy:
                 continue  # never end while documents are being processed
             now = time.monotonic()

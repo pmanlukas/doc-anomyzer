@@ -18,6 +18,7 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass, field
+import threading
 from functools import lru_cache
 from pathlib import Path
 
@@ -53,9 +54,44 @@ def spacy_installed() -> bool:
     return any(importlib.util.find_spec(name) is not None for name in SPACY_MODELS)
 
 
-@lru_cache(maxsize=1)
+#: The model is pre-loaded in a background thread (see :func:`preload`). A
+#: second caller waits for that instead of loading 1 GB a second time.
+_LOAD_LOCK = threading.Lock()
+_preload_started = False
+
+
 def load_spacy():
     """Load the best installed German spaCy model (cached)."""
+    with _LOAD_LOCK:
+        return _load_spacy_once()
+
+
+def preload() -> None:
+    """Load the language model in the background (once; never raises).
+
+    Loading takes several seconds – longer from a hard disk. Started while
+    the window opens or while the first documents are being read, the model
+    is ready when the detection needs it.
+    """
+    global _preload_started
+    if _preload_started:
+        return
+    _preload_started = True
+
+    def run() -> None:
+        from ..config import background_priority
+
+        background_priority(process=False)  # the window comes first
+        try:
+            load_spacy()
+        except Exception:  # noqa: BLE001 - reported when the model is really needed
+            log.info("Sprachmodell konnte nicht vorgeladen werden", exc_info=True)
+
+    threading.Thread(target=run, name="sprachmodell", daemon=True).start()
+
+
+@lru_cache(maxsize=1)
+def _load_spacy_once():
     import spacy
 
     from ..config import custom_model_dir
@@ -78,6 +114,10 @@ def load_spacy():
     raise UserError(
         "Das Sprachmodell des Programms fehlt. Bitte das Setup "
         "„Dokumenten-Anonymisierer-Setup.exe“ noch einmal ausführen.")
+
+
+#: ``load_spacy.cache_clear()`` – used after the model was re-trained.
+load_spacy.cache_clear = _load_spacy_once.cache_clear  # type: ignore[attr-defined]
 
 
 def _known_words_file() -> Path:

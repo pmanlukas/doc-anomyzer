@@ -423,8 +423,10 @@ Version 0.3.0 ist die Kontrolle digitaler Seiten etwa doppelt so schnell
 Kernen steigt der Durchsatz entsprechend (Arbeitsspeicher: ca. 2 GB + 0,6 GB
 je zusätzlichem Arbeitsprozess).
 
-**Ältere Rechner** (Zielklasse: Intel Core i3 der 4000er-Reihe, zwei Kerne /
-vier Threads, 4–8 GB Arbeitsspeicher, Windows 10). Was das Programm dafür tut:
+**Ältere Rechner** (Zielklasse: üblicher Büro-PC mit Intel Core i3 der
+4000er-Reihe, zwei Kerne / vier Threads, 8–16 GB Arbeitsspeicher, Windows 10
+oder 11; mit 4 GB läuft das Programm ebenfalls, nur langsamer). Was das
+Programm dafür tut:
 
 * **Arbeitsspeicher wird erkannt** (unter Windows ohne Zusatzpaket – vorher
   blieb er dort unbekannt und es starteten zu viele Prozesse). Die Zahl der
@@ -447,14 +449,21 @@ vier Threads, 4–8 GB Arbeitsspeicher, Windows 10). Was das Programm dafür tut
 * **Start:** Ein ungeduldiger zweiter Doppelklick öffnet kein zweites
   Fenster mehr; das Programm wartet bis zu drei Minuten auf einen langsamen
   Start, bevor es einen Fehler meldet.
+* **Sprachmodell wird vorgeladen:** ab 8 GB, sobald das Fenster offen ist,
+  sonst während die ersten Dokumente gelesen werden. Die erste Akte nach dem
+  Start wartet dadurch nicht auf das Laden (hier 3,5 s, von einer Festplatte
+  deutlich länger). Auf die Dauer einer Stapelverarbeitung hat das keinen
+  messbaren Einfluss.
 
 Gemessen mit zwei Kernen (dieselbe Maschine wie oben, auf zwei Kerne
-beschränkt; ein i3-4000 ist je Kern eher langsamer, die Größenordnung stimmt):
+beschränkt, je drei Läufe; ein i3-4000 ist je Kern eher langsamer, die
+Größenordnung stimmt):
 
-| Dokument | vorher | jetzt |
+| Dokument | Kontrolle mit genauen Sprachdateien (bisher) | jetzt |
 |---|---|---|
-| 30 Seiten digital | 33–50 s | **19–20 s** (ca. 0,65 s je Seite) |
-| 10 Seiten Scan schlechter Qualität | ca. 55 s | ca. 55 s (ca. 5,5 s je Seite – unverändert, Genauigkeit geht vor) |
+| 30 Seiten digital | 30–32 s | **16–17 s** (ca. 0,55 s je Seite) |
+| 10 Seiten Scan schlechter Qualität | 55–57 s | 55–57 s (ca. 5,5 s je Seite – unverändert, Genauigkeit geht vor) |
+| 12 kurze Dokumente in einer Akte (14 Seiten, 4 Scans) | – | 27–30 s |
 
 Speicherbedarf (gemessen): Hauptprozess mit Sprachmodell ca. 1 GB, je
 Arbeitsprozess ca. 0,5 GB, je laufender Texterkennung ca. 0,1 GB; Spitze
